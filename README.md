@@ -35,10 +35,10 @@
 
 | 版本 | 体积 | 需要装 .NET 吗 | 适合谁 |
 | --- | --- | --- | --- |
-| **`WeChatBoot-win-x64-standalone.zip`**（推荐） | ~52 MB | ❌ 不用 | 不想装运行时的绝大多数人 |
+| **`WeChatBoot-win-x64-standalone.zip`**（推荐） | ~43 MB | ❌ 不用 | 不想装运行时的绝大多数人 |
 | `WeChatBoot.exe` | ~340 KB | ✅ 需要 [.NET 9 桌面运行时](https://dotnet.microsoft.com/download/dotnet/9.0) | 电脑里已经有 .NET 9 的人 |
 
-> 都是单文件绿色版，解压/拷到哪都能跑，不写注册表、不装服务。
+> 都是单文件绿色版，解压/拷到哪都能跑，不写注册表、不装服务。自包含版解压后约 52 MB，压缩包 43 MB。
 
 ## ✨ 为什么用它
 

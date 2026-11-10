@@ -60,7 +60,7 @@ jobs:
 
             | 文件 | 体积 | 说明 |
             | --- | --- | --- |
-            | `WeChatBoot-win-x64-standalone.zip` | ~52MB | **推荐**，解压即用，不用装 .NET |
+            | `WeChatBoot-win-x64-standalone.zip` | ~43MB | **推荐**，解压即用，不用装 .NET |
             | `WeChatBoot.exe` | ~340KB | 需要电脑里已有 [.NET 9 桌面运行时](https://dotnet.microsoft.com/download/dotnet/9.0) |
 
             双击 → 选微信版本 → 数量点成 3 → 点「打开 3 个微信」，各自扫码即可。

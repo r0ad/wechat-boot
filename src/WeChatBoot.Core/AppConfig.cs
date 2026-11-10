@@ -36,6 +36,12 @@ public sealed class AppConfig
     /// <summary>等待新实例主窗口出现的超时（毫秒）。</summary>
     public int VerifyTimeoutMs { get; set; } = 6000;
 
+    /// <summary>窗口宽度（记住上次大小）。</summary>
+    public int WindowWidth { get; set; } = 660;
+
+    /// <summary>窗口高度（记住上次大小）。</summary>
+    public int WindowHeight { get; set; } = 600;
+
     /// <summary>高级：额外需要布防的互斥量名（一般留空）。</summary>
     public List<string> ExtraMutexNames { get; set; } = new();
 

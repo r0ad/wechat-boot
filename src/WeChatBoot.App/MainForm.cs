@@ -1,380 +1,777 @@
-using System.Diagnostics;
 using System.Drawing;
+using System.Windows.Forms;
 using WeChatBoot.Core;
 
 namespace WeChatBoot.App;
 
 /// <summary>
-/// 主窗体。刻意不用设计器：整个界面就是一个可读的 C# 文件，
-/// 想改字号、加按钮直接改代码即可（需求里要的“轻量编辑”）。
+/// 主界面。
+///
+/// 约定大于配置：界面上只有两件事要用户决定 ——「用哪个微信」和「开几个」。
+/// 策略、间隔、超时、互斥量名全部走默认值（Auto + 自动发现），要改就改
+/// wechatboot.config.json，界面不摆这些开关。
+/// 有意做小：这是个常驻托盘边上的小工具，默认 660×600，可自由缩放。
 /// </summary>
 public sealed class MainForm : Form
 {
-    private readonly AppConfig _config = AppConfig.Load();
-    private readonly List<WeChatProduct> _products = new();
-    private readonly System.Windows.Forms.Timer _refreshTimer = new();
+    private readonly AppConfig _config;
 
-    private ComboBox _productBox = null!;
-    private NumericUpDown _countBox = null!;
-    private ComboBox _strategyBox = null!;
-    private Button _launchButton = null!;
-    private Button _closeAllButton = null!;
-    private Button _rescanButton = null!;
-    private ListView _instanceList = null!;
-    private TextBox _logBox = null!;
-    private Label _statusLabel = null!;
+    private Panel _body = new();
+    private readonly Panel _header = new();
+    private readonly Label _statusLabel = new();
+    private readonly PillButton _settingsButton = new();
+    private readonly PictureBox _logo = new();
+
+    private readonly Card _actionCard = new();
+    private readonly PickerField _productPicker = new();
+    private readonly PillButton _rescanButton = new();
+    private readonly PillButton _manualButton = new();
+    private readonly Stepper _stepper = new();
+    private readonly PillButton _launchButton = new();
+
+    private readonly Card _instancesCard = new();
+    private readonly Label _instancesTitle = new();
+    private readonly PillButton _closeAllButton = new();
+    private readonly FlowLayoutPanel _rows = new();
+    private readonly Label _emptyHint = new();
+
+    private readonly Card _logCard = new();
+    private readonly TextBox _log = new();
+    private readonly PillButton _logToggle = new();
+
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
+
+    private IReadOnlyList<WeChatProduct> _products = Array.Empty<WeChatProduct>();
     private bool _busy;
+    private int _currentCount;
+    private bool _logCollapsed = true;
+    private string _rowSignature = string.Empty;
+
+    private const int LogExpandedHeight = 126;
+    private const int LogCollapsedHeight = 40;
 
     public MainForm()
     {
-        BuildUi();
-        LoadProducts();
-        RefreshInstances();
+        _config = AppConfig.Load();
 
-        _refreshTimer.Interval = 2000;
-        _refreshTimer.Tick += (_, _) => RefreshInstances();
-        _refreshTimer.Start();
-
-        Log($"配置：{AppConfig.ConfigFilePath}");
-    }
-
-    // ───────────────────────── 界面 ─────────────────────────
-
-    private void BuildUi()
-    {
         Text = "微信多开启动器";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(920, 640);
-        MinimumSize = new Size(780, 560);
-        Font = new Font("Microsoft YaHei UI", 9F);
+        ClientSize = new Size(
+            Math.Clamp(_config.WindowWidth, 560, 1400),
+            Math.Clamp(_config.WindowHeight, 480, 1200));
+        MinimumSize = new Size(560, 470);
+        BackColor = Theme.Bg;
+        Font = Theme.BodyFont;
         AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        DoubleBuffered = true;
+        Icon = LoadAppIcon();
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 100, Padding = new Padding(12, 10, 12, 10) };
+        BuildHeader();
+        BuildBody();
 
-        var productLabel = new Label { Text = "微信程序", AutoSize = true, Location = new Point(12, 16) };
-        _productBox = new ComboBox
+        AcceptButton = _launchButton;
+        LayoutShell();
+
+        _timer.Tick += (_, _) => RefreshInstances();
+        _timer.Start();
+
+        Load += (_, _) =>
         {
-            Location = new Point(78, 12),
-            Width = 470,
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Scan(verbose: false);
+            _stepper.Value = Math.Clamp(_config.InstanceCount, 1, 20);
+            UpdateLaunchButton();
+            RefreshInstances();
+            SetStatus(IdleStatusText(), Theme.TextSecondary);
+            Log($"{WeChatBootInfo.Name} {WeChatBootInfo.Version} 已就绪");
+
         };
-
-        var pickButton = new Button { Text = "手动指定…", Location = new Point(556, 11), Size = new Size(96, 26), Anchor = AnchorStyles.Top | AnchorStyles.Right };
-        pickButton.Click += (_, _) => PickExecutable();
-
-        _rescanButton = new Button { Text = "重新扫描", Location = new Point(658, 11), Size = new Size(92, 26), Anchor = AnchorStyles.Top | AnchorStyles.Right };
-        _rescanButton.Click += (_, _) => LoadProducts();
-
-        var countLabel = new Label { Text = "实例数", AutoSize = true, Location = new Point(12, 58) };
-        _countBox = new NumericUpDown
-        {
-            Location = new Point(66, 54),
-            Width = 60,
-            Minimum = 1,
-            Maximum = 20,
-            Value = Math.Clamp(_config.InstanceCount, 1, 20),
-        };
-
-        var strategyLabel = new Label { Text = "方式", AutoSize = true, Location = new Point(142, 58) };
-        _strategyBox = new ComboBox
-        {
-            Location = new Point(182, 54),
-            Width = 190,
-            DropDownStyle = ComboBoxStyle.DropDownList,
-        };
-        _strategyBox.Items.AddRange(new object[]
-        {
-            new StrategyItem(LaunchStrategy.Auto, "自动（推荐）"),
-            new StrategyItem(LaunchStrategy.MutexAcl, "互斥量 ACL"),
-            new StrategyItem(LaunchStrategy.CloseHandle, "关闭句柄"),
-            new StrategyItem(LaunchStrategy.Direct, "直接启动（诊断）"),
-        });
-        _strategyBox.SelectedIndex = _strategyBox.Items.Cast<StrategyItem>()
-            .Select((item, index) => (item, index))
-            .FirstOrDefault(pair => pair.item.Value == _config.Strategy).index;
-
-        _launchButton = new Button
-        {
-            Text = "启动",
-            Location = new Point(390, 52),
-            Size = new Size(110, 30),
-            BackColor = Color.FromArgb(7, 193, 96),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-        };
-        _launchButton.FlatAppearance.BorderSize = 0;
-        _launchButton.Click += OnLaunchClick;
-
-        _closeAllButton = new Button { Text = "全部关闭", Location = new Point(510, 52), Size = new Size(100, 30) };
-        _closeAllButton.Click += OnCloseAllClick;
-
-        _statusLabel = new Label
-        {
-            AutoSize = true,
-            Location = new Point(622, 58),
-            ForeColor = Color.DimGray,
-            Text = "就绪",
-        };
-
-        header.Controls.AddRange(new Control[]
-        {
-            productLabel, _productBox, pickButton, _rescanButton,
-            countLabel, _countBox, strategyLabel, _strategyBox,
-            _launchButton, _closeAllButton, _statusLabel,
-        });
-
-        var logPanel = new Panel { Dock = DockStyle.Bottom, Height = 170, Padding = new Padding(12, 0, 12, 10) };
-        var logTitle = new Label { Text = "运行日志", Dock = DockStyle.Top, Height = 22, ForeColor = Color.DimGray };
-        _logBox = new TextBox
-        {
-            Dock = DockStyle.Fill,
-            Multiline = true,
-            ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
-            WordWrap = false,
-            BackColor = Color.FromArgb(250, 250, 250),
-            Font = new Font("Consolas", 9F),
-        };
-        logPanel.Controls.Add(_logBox);
-        logPanel.Controls.Add(logTitle);
-
-        var listPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 12, 0) };
-        _instanceList = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            GridLines = false,
-            HideSelection = false,
-            MultiSelect = false,
-        };
-        _instanceList.Columns.Add("PID", 70);
-        _instanceList.Columns.Add("窗口标题", 150);
-        _instanceList.Columns.Add("窗口类", 210);
-        _instanceList.Columns.Add("程序路径", 420);
-        listPanel.Controls.Add(_instanceList);
-
-        Controls.Add(listPanel);
-        Controls.Add(logPanel);
-        Controls.Add(header);
 
         FormClosing += (_, _) => SaveConfig();
     }
 
-    // ───────────────────────── 产品列表 ─────────────────────────
+    // ───────────────────────── 布局 ─────────────────────────
 
-    private void LoadProducts()
+    private void BuildHeader()
     {
-        try
+        _header.SetBounds(0, 0, ClientSize.Width, 60);
+        _header.BackColor = Color.White;
+        _header.Paint += (_, e) =>
         {
-            _products.Clear();
-            _products.AddRange(WeChatLocator.DetectAll(_config, Log));
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawLine(pen, 0, _header.Height - 1, _header.Width, _header.Height - 1);
+        };
 
-            // 手动维护过的路径即便当前没在扫描结果里，也要保留（用户可能在改完目录后先手动指定）
-            foreach (var path in _config.RecentPaths)
-            {
-                if (!File.Exists(path)) continue;
-                if (_products.Any(p => string.Equals(p.ExecutablePath, path, StringComparison.OrdinalIgnoreCase))) continue;
-                _products.Add(Describe(path, "手动指定"));
-            }
+        _logo.Location = new Point(18, 15);
+        _logo.Size = new Size(30, 30);
+        _logo.SizeMode = PictureBoxSizeMode.Zoom;
+        _logo.BackColor = Color.Transparent;
+        _logo.Image = Icon?.ToBitmap();
 
-            var previous = (_productBox.SelectedItem as WeChatProduct)?.ExecutablePath ?? _config.ExecutablePath;
-
-            _productBox.Items.Clear();
-            foreach (var product in _products) _productBox.Items.Add(product);
-
-            if (_products.Count == 0)
-            {
-                _statusLabel.Text = "未找到微信，请用“手动指定…”";
-                return;
-            }
-
-            var index = previous is null
-                ? 0
-                : Math.Max(0, _products.FindIndex(p => string.Equals(p.ExecutablePath, previous, StringComparison.OrdinalIgnoreCase)));
-            _productBox.SelectedIndex = index;
-            _statusLabel.Text = $"已识别 {_products.Count} 个微信";
-        }
-        catch (Exception ex)
+        var title = new Label
         {
-            Log($"扫描微信失败：{ex.Message}");
-        }
+            Text = "微信多开启动器",
+            Font = Theme.HeaderFont,
+            ForeColor = Theme.TextPrimary,
+            BackColor = Color.White,
+            AutoSize = true,
+            Location = new Point(58, 19),
+        };
+
+        _statusLabel.AutoSize = false;
+        _statusLabel.TextAlign = ContentAlignment.MiddleRight;
+        _statusLabel.Font = Theme.SmallFont;
+        _statusLabel.ForeColor = Theme.TextSecondary;
+        _statusLabel.BackColor = Color.White;
+        _statusLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _statusLabel.Location = new Point(ClientSize.Width - 428, 21);
+        _statusLabel.Size = new Size(320, 18);
+
+        _settingsButton.Text = "设置";
+        _settingsButton.Kind = ButtonKind.Ghost;
+        _settingsButton.Font = Theme.SmallFont;
+        _settingsButton.Size = new Size(64, 28);
+        _settingsButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _settingsButton.Location = new Point(ClientSize.Width - 88, 16);
+        _settingsButton.Click += (_, _) => OpenSettings();
+
+        _header.Controls.AddRange(new Control[] { _logo, title, _statusLabel, _settingsButton });
+        Controls.Add(_header);
     }
 
-    private void PickExecutable()
+    private void BuildBody()
+    {
+        var body = new Panel { BackColor = Theme.Bg };
+        _body = body;
+
+        BuildActionCard();
+        BuildInstancesCard();
+        BuildLogCard();
+
+        body.Controls.AddRange(new Control[] { _actionCard, _instancesCard, _logCard });
+        body.Resize += (_, _) => LayoutCards();
+
+        Controls.Add(body);
+        Resize += (_, _) => LayoutShell();
+    }
+
+    /// <summary>外壳：顶栏固定 60，其余全给 body。</summary>
+    private void LayoutShell()
+    {
+        var width = ClientSize.Width;
+        var height = ClientSize.Height;
+
+        _header.Bounds = new Rectangle(0, 0, width, 60);
+        _body.Bounds = new Rectangle(0, 60, width, Math.Max(0, height - 60));
+        LayoutCards();
+    }
+
+    /// <summary>
+    /// 三张卡片显式摆放：上（操作）、中（列表，吃掉剩余高度）、下（日志）。
+    /// 不用 Dock 是因为 Fill + Top 的叠放顺序依赖 z 序，实测会互相盖住。
+    /// </summary>
+    private void LayoutCards()
+    {
+        const int pad = 16;
+        const int gap = 10;
+        const int topPad = 14;
+        const int bottomPad = 14;
+
+        var width = Math.Max(260, _body.ClientSize.Width - pad * 2);
+        var height = _body.ClientSize.Height;
+        var logHeight = _logCollapsed ? LogCollapsedHeight : LogExpandedHeight;
+
+        _actionCard.Bounds = new Rectangle(pad, topPad, width, 112);
+
+        var logTop = Math.Max(topPad + 112 + gap + 120, height - bottomPad - logHeight);
+        _logCard.Bounds = new Rectangle(pad, logTop, width, logHeight);
+
+        var instancesTop = topPad + 112 + gap;
+        _instancesCard.Bounds = new Rectangle(
+            pad,
+            instancesTop,
+            width,
+            Math.Max(120, logTop - gap - instancesTop));
+    }
+
+    /// <summary>一张卡搞定「用哪个 + 开几个 + 启动」，两行排布，尽量占地方少。</summary>
+    private void BuildActionCard()
+    {
+        _actionCard.SetBounds(0, 0, CardWidth(), 112);
+
+        var productCaption = Caption("微信");
+        productCaption.Location = new Point(16, 15);
+
+        _productPicker.Location = new Point(52, 11);
+        _productPicker.Size = new Size(_actionCard.Width - 52 - 16 - 148, 36);
+        _productPicker.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _productPicker.SelectionChanged += (_, _) =>
+        {
+            _config.LastProductKey = ProductKeyOf(SelectedProduct());
+            _config.RememberPath(SelectedProduct()?.ExecutablePath ?? string.Empty);
+            Log($"已选择：{_productPicker.Selected?.Text}");
+            RefreshInstances();
+        };
+
+        _manualButton.Text = "手动指定";
+        _manualButton.Kind = ButtonKind.Ghost;
+        _manualButton.Font = Theme.SmallFont;
+        _manualButton.Size = new Size(76, 36);
+        _manualButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _manualButton.Location = new Point(_actionCard.Width - 144, 11);
+        _manualButton.Click += (_, _) => PickManually();
+
+        _rescanButton.Text = "扫描";
+        _rescanButton.Kind = ButtonKind.Ghost;
+        _rescanButton.Font = Theme.SmallFont;
+        _rescanButton.Size = new Size(60, 36);
+        _rescanButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _rescanButton.Location = new Point(_actionCard.Width - 76, 11);
+        _rescanButton.Click += (_, _) => Scan(verbose: true);
+
+        var countCaption = Caption("数量");
+        countCaption.Location = new Point(16, 71);
+
+        _stepper.Location = new Point(52, 64);
+        _stepper.Size = new Size(118, 36);
+        _stepper.Min = 1;
+        _stepper.Max = 20;
+        _stepper.ValueChanged += (_, _) =>
+        {
+            _config.InstanceCount = _stepper.Value;
+            UpdateLaunchButton();
+        };
+
+        var hint = new Label
+        {
+            Text = "含已打开的总数",
+            Font = Theme.SmallFont,
+            ForeColor = Theme.TextSecondary,
+            BackColor = Color.White,
+            AutoSize = true,
+            Location = new Point(180, 74),
+        };
+
+        _launchButton.Kind = ButtonKind.Primary;
+        _launchButton.Size = new Size(180, 40);
+        _launchButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _launchButton.Location = new Point(_actionCard.Width - 196, 62);
+        _launchButton.Click += async (_, _) => await LaunchAsync();
+
+        _actionCard.Controls.AddRange(new Control[]
+        {
+            productCaption, _productPicker, _manualButton, _rescanButton,
+            countCaption, _stepper, hint, _launchButton,
+        });
+    }
+
+    private void BuildInstancesCard()
+    {
+        _instancesCard.SetBounds(0, 0, CardWidth(), 320);
+        _instancesCard.Padding = new Padding(0);
+
+        _instancesTitle.Text = "已经打开";
+        _instancesTitle.Font = Theme.BodyBold;
+        _instancesTitle.ForeColor = Theme.TextPrimary;
+        _instancesTitle.BackColor = Color.White;
+        _instancesTitle.AutoSize = true;
+        _instancesTitle.Location = new Point(16, 14);
+
+        _closeAllButton.Text = "全部关闭";
+        _closeAllButton.Kind = ButtonKind.Danger;
+        _closeAllButton.Font = Theme.SmallFont;
+        _closeAllButton.Size = new Size(80, 26);
+        _closeAllButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _closeAllButton.Location = new Point(_instancesCard.Width - 96, 10);
+        _closeAllButton.Click += async (_, _) => await CloseAllAsync();
+
+        _rows.Dock = DockStyle.Fill;
+        _rows.FlowDirection = FlowDirection.TopDown;
+        _rows.WrapContents = false;
+        _rows.AutoScroll = true;
+        _rows.BackColor = Color.White;
+        _rows.Padding = new Padding(12, 42, 12, 10);
+
+        _emptyHint.Text = "还没有打开微信\r\n点上面的绿色按钮就行，不用改设置";
+        _emptyHint.Font = Theme.BodyFont;
+        _emptyHint.ForeColor = Theme.TextSecondary;
+        _emptyHint.TextAlign = ContentAlignment.MiddleCenter;
+        _emptyHint.Dock = DockStyle.Fill;
+        _emptyHint.BackColor = Color.White;
+
+        var host = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
+        host.Controls.Add(_rows);
+        host.Controls.Add(_emptyHint);
+        _emptyHint.BringToFront();
+
+        _instancesCard.Controls.AddRange(new Control[] { host, _instancesTitle, _closeAllButton });
+        host.BringToFront();
+    }
+
+    private void BuildLogCard()
+    {
+        _logCard.SetBounds(0, 0, CardWidth(), LogCollapsedHeight);
+
+        var caption = new Label
+        {
+            Text = "详细信息",
+            Font = Theme.SmallFont,
+            ForeColor = Theme.TextSecondary,
+            BackColor = Color.White,
+            AutoSize = true,
+            Location = new Point(16, 11),
+        };
+
+        _logToggle.Text = "展开";
+        _logToggle.Kind = ButtonKind.Ghost;
+        _logToggle.Font = Theme.SmallFont;
+        _logToggle.Size = new Size(56, 24);
+        _logToggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _logToggle.Location = new Point(_logCard.Width - 72, 8);
+        _logToggle.Click += (_, _) => ToggleLog();
+
+        _log.Multiline = true;
+        _log.ReadOnly = true;
+        _log.ScrollBars = ScrollBars.Vertical;
+        _log.BorderStyle = BorderStyle.None;
+        _log.BackColor = Color.FromArgb(0xFA, 0xFB, 0xFD);
+        _log.ForeColor = Theme.TextSecondary;
+        _log.Font = Theme.LogFont;
+        _log.Dock = DockStyle.Fill;
+        _log.TabStop = false;
+        _log.Visible = !_logCollapsed;
+
+        var logHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 38, 14, 12), BackColor = Color.White };
+        logHost.Controls.Add(_log);
+        logHost.Controls.Add(caption);
+        _logCard.Controls.Add(logHost);
+    }
+
+    private int CardWidth() => Math.Max(320, ClientSize.Width - 32);
+
+    private static Label Caption(string text) => new()
+    {
+        Text = text,
+        Font = Theme.SmallFont,
+        ForeColor = Theme.TextSecondary,
+        BackColor = Color.White,
+        AutoSize = true,
+    };
+
+    // ───────────────────────── 行为 ─────────────────────────
+
+    private WeChatProduct? SelectedProduct() => _productPicker.Selected?.Tag as WeChatProduct;
+
+    private static string? ProductKeyOf(WeChatProduct? p) => p is null ? null : $"{p.Key}:{p.ExecutablePath}";
+
+    private string IdleStatusText()
+    {
+        var instances = InstanceManager.GetInstances().Count;
+        if (_products.Count == 0) return "没找到微信";
+
+        var installs = _products.Count == 1 ? "1 个微信安装" : $"{_products.Count} 个微信安装";
+        return instances == 0 ? $"就绪 · {installs}" : $"就绪 · {installs} · 已开 {instances} 个";
+    }
+
+    private void SetStatus(string text, Color color)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => SetStatus(text, color)));
+            return;
+        }
+
+        _statusLabel.Text = text;
+        _statusLabel.ForeColor = color;
+    }
+
+    private void Log(string message)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => Log(message)));
+            return;
+        }
+
+        _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
+        _log.SelectionStart = _log.TextLength;
+        _log.ScrollToCaret();
+    }
+
+    private void Scan(bool verbose)
+    {
+        if (verbose) Log("重新扫描本机微信…");
+
+        _products = WeChatLocator.DetectAll(_config, verbose ? Log : null);
+
+        var previous = SelectedProduct()?.ExecutablePath;
+        var items = _products.Select(p => ((string Text, object? Tag))(p.ToDisplayText(), p)).ToList();
+
+        var select = 0;
+        var list = _products.ToList();
+        if (!string.IsNullOrEmpty(previous))
+        {
+            var index = list.FindIndex(p => string.Equals(p.ExecutablePath, previous, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) select = index;
+        }
+        else if (!string.IsNullOrEmpty(_config.LastProductKey))
+        {
+            var index = list.FindIndex(p => ProductKeyOf(p) == _config.LastProductKey);
+            if (index >= 0) select = index;
+        }
+
+        _productPicker.SetItems(items, select);
+        _productPicker.DropDownEnabled = items.Count > 0;
+
+        if (items.Count == 0)
+        {
+            SetStatus("没找到微信，点「手动指定」", Theme.Warn);
+            Log("没有自动找到微信，请点「手动指定」选择 Weixin.exe / WeChat.exe");
+        }
+        else
+        {
+            Log($"识别到 {items.Count} 个微信安装");
+            SetStatus(IdleStatusText(), Theme.TextSecondary);
+        }
+
+        UpdateLaunchButton();
+        RefreshInstances();
+    }
+
+    private void UpdateLaunchButton()
+    {
+        var ok = !_busy && SelectedProduct() is not null;
+        _launchButton.Enabled = ok;
+
+        // 按钮说的是「还要开几个」，不是「总共几个」—— 已经开着的时候别让人以为点了没反应。
+        var delta = _stepper.Value - _currentCount;
+        _launchButton.Text = _busy
+            ? "正在打开…"
+            : delta > 0 ? $"打开 {delta} 个微信" : "已经开着，不用重复打开";
+        _launchButton.Invalidate();
+
+        _stepper.Enabled = !_busy;
+        _productPicker.Enabled = !_busy;
+        _rescanButton.Enabled = !_busy;
+        _manualButton.Enabled = !_busy;
+    }
+
+    private void OpenSettings()
+    {
+        using var dialog = new SettingsForm(_config);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        Log($"设置已保存：{_config.Strategy} · 间隔 {_config.StaggerMs}ms · 超时 {_config.VerifyTimeoutMs}ms");
+        Scan(verbose: false);
+        SetStatus("设置已保存", Theme.AccentDark);
+    }
+
+    private void PickManually()
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "选择微信主程序（Weixin.exe / WeChat.exe）",
-            Filter = "微信主程序|Weixin.exe;WeChat.exe|可执行文件|*.exe|所有文件|*.*",
+            Title = "选择微信主程序",
+            Filter = "微信主程序|Weixin.exe;WeChat.exe|可执行文件|*.exe",
             CheckFileExists = true,
         };
 
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         _config.RememberPath(dialog.FileName);
-        _config.ExecutablePath = dialog.FileName;
-
-        var product = Describe(dialog.FileName, "手动指定");
-        _products.RemoveAll(p => string.Equals(p.ExecutablePath, product.ExecutablePath, StringComparison.OrdinalIgnoreCase));
-        _products.Insert(0, product);
-
-        _productBox.Items.Clear();
-        foreach (var item in _products) _productBox.Items.Add(item);
-        _productBox.SelectedIndex = 0;
-
-        Log($"已手动指定：{dialog.FileName}");
-        SaveConfig();
+        _config.LastProductKey = null;
+        Log($"手动指定：{dialog.FileName}");
+        Scan(verbose: true);
     }
 
-    private static WeChatProduct Describe(string path, string source)
-    {
-        var name = Path.GetFileNameWithoutExtension(path);
-        string? version = null;
-        try { version = FileVersionInfo.GetVersionInfo(path).FileVersion; } catch { /* 版本不重要 */ }
-
-        return new WeChatProduct
-        {
-            Key = name,
-            DisplayName = name.Equals("Weixin", StringComparison.OrdinalIgnoreCase) ? "微信 4.x" : "微信 3.x",
-            ExecutablePath = path,
-            Version = version,
-            Source = source,
-        };
-    }
-
-    // ───────────────────────── 启动 ─────────────────────────
-
-    private async void OnLaunchClick(object? sender, EventArgs e)
+    private async Task LaunchAsync()
     {
         if (_busy) return;
 
-        var product = _productBox.SelectedItem as WeChatProduct;
-        if (product is null || !File.Exists(product.ExecutablePath))
+        var product = SelectedProduct();
+        Log("收到启动请求");
+        if (product is null)
         {
-            MessageBox.Show(this, "请先选择一个有效的微信程序。", "微信多开启动器", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            SetStatus("先选一个微信", Theme.Warn);
             return;
         }
 
-        var strategy = ((StrategyItem)_strategyBox.SelectedItem!).Value;
-        var count = (int)_countBox.Value;
-
-        _config.InstanceCount = count;
-        _config.Strategy = strategy;
-        _config.ExecutablePath = product.ExecutablePath;
-        _config.LastProductKey = product.Key;
-        SaveConfig();
-
+        var target = _stepper.Value;
+        var before = Launcher.InstancesOf(product.ExecutablePath).Count;
         _busy = true;
-        _launchButton.Enabled = false;
-        _rescanButton.Enabled = false;
-        _statusLabel.Text = "正在启动…";
-        Log($"====== 开始启动：{Path.GetFileName(product.ExecutablePath)} × {count}（方式：{_strategyBox.SelectedItem}）======");
+        UpdateLaunchButton();
+        SetStatus("正在启动…", Theme.TextSecondary);
+        Log($"目标 {target} 个：{product.ToDisplayText()}");
 
-        var exe = product.ExecutablePath;
-        var stagger = _config.StaggerMs;
-        var timeout = _config.VerifyTimeoutMs;
-        var extra = _config.ExtraMutexNames.ToList();
-
+        var ok = false;
         try
         {
-            var summary = await Task.Run(() =>
-            {
-                // 守卫在整轮启动期间保持存活：ACL 只有在有进程持句柄时才持续生效
-                using var guard = new MutexGuard();
-                var ok = 0;
-                for (var i = 0; i < count; i++)
-                {
-                    if (i > 0 && stagger > 0) Thread.Sleep(stagger);
-
-                    var outcome = Launcher.Launch(exe, strategy, guard, timeout, message => Log("  " + message), extra);
-                    if (outcome.Success) ok++;
-                    Log($"[{i + 1}/{count}] {(outcome.Success ? "成功" : "失败")}：{outcome.Message}");
-                }
-
-                return (ok, total: count, detail: guard.Detail);
-            });
-
-            Log($"====== 结束：成功 {summary.ok}/{summary.total}，布防={summary.detail} ======");
-            _statusLabel.Text = summary.ok > 0 ? $"成功 {summary.ok}/{summary.total}" : "未能多开，请查看日志";
+            ok = await Task.Run(() => RunLaunch(product, target));
         }
         catch (Exception ex)
         {
-            Log($"启动异常：{ex.Message}");
-            _statusLabel.Text = "启动异常";
+            Log($"启动出错了：{ex.Message}");
         }
         finally
         {
             _busy = false;
-            _launchButton.Enabled = true;
-            _rescanButton.Enabled = true;
+            UpdateLaunchButton();
             RefreshInstances();
         }
+
+        var now = Launcher.InstancesOf(product.ExecutablePath).Count;
+        var opened = Math.Max(0, now - before);
+
+        if (ok && opened > 0)
+        {
+            SetStatus($"✓ 新开了 {opened} 个，现在一共 {now} 个，扫码登录就行", Theme.AccentDark);
+            Log($"完成：新开 {opened} 个，一共 {now} 个。");
+        }
+        else if (ok)
+        {
+            SetStatus($"已经开了 {now} 个，不用重复打开", Theme.TextSecondary);
+            Log("完成：数量已达标，没有新开。");
+        }
+        else if (now > 0)
+        {
+            SetStatus($"只新开了 {opened} 个（一共 {now} 个），可能到上限了", Theme.Warn);
+        }
+        else
+        {
+            SetStatus("没能打开，展开「详细信息」看看原因", Theme.Warn);
+        }
     }
 
-    private void OnCloseAllClick(object? sender, EventArgs e)
+    /// <summary>
+    /// 反复「按一次启动」直到实例数达标。守卫必须活着覆盖整个过程：
+    /// deny DACL 依附在内核对象上，守卫一退出、对象没人持有就会被销毁（实测坑）。
+    /// </summary>
+    private bool RunLaunch(WeChatProduct product, int target)
     {
-        if (_busy) return;
-        if (MessageBox.Show(this, "结束所有微信相关进程？未发送的消息会留在服务器上。", "确认",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        var exe = product.ExecutablePath;
+        using var guard = new MutexGuard();
 
-        var killed = Launcher.CloseAll(Log);
-        Log($"已结束 {killed} 个微信相关进程");
-        RefreshInstances();
+        for (var attempt = 1; attempt <= 20; attempt++)
+        {
+            var current = Launcher.InstancesOf(exe).Count;
+            if (current >= target)
+            {
+                Log($"已有 {current} 个实例，达到目标");
+                return true;
+            }
+
+            Log($"开第 {current + 1} 个（{current}/{target}）");
+            var outcome = Launcher.Launch(
+                exe,
+                _config.Strategy,
+                guard,
+                _config.VerifyTimeoutMs,
+                Log,
+                _config.ExtraMutexNames);
+
+            if (!outcome.Success)
+            {
+                Log($"没成功：{outcome.Message}");
+                Log(FriendlyReason(outcome.Message));
+                return Launcher.InstancesOf(exe).Count >= target;
+            }
+
+            Thread.Sleep(Math.Clamp(_config.StaggerMs, 200, 5000));
+        }
+
+        return Launcher.InstancesOf(exe).Count >= target;
     }
 
-    // ───────────────────────── 刷新与日志 ─────────────────────────
+    /// <summary>把内核层的失败原因翻译成小白能照做的一句话。</summary>
+    private static readonly Dictionary<string, string> VersionCache = new(StringComparer.OrdinalIgnoreCase);
 
-    private void RefreshInstances()
+    /// <summary>读 exe 的文件版本，读不到就当没有（不为了个版本号让行建不出来）。</summary>
+    private static string ProductVersionOf(string? path)
     {
-        if (IsDisposed) return;
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+        lock (VersionCache)
+        {
+            if (VersionCache.TryGetValue(path, out var cached)) return cached;
+        }
 
+        var version = string.Empty;
         try
         {
-            var instances = InstanceManager.GetInstances();
-            var selected = _instanceList.SelectedItems.Count > 0 ? _instanceList.SelectedItems[0].Text : null;
-
-            _instanceList.BeginUpdate();
-            _instanceList.Items.Clear();
-            foreach (var instance in instances)
-            {
-                var item = new ListViewItem(instance.Pid.ToString());
-                item.SubItems.Add(instance.Title);
-                item.SubItems.Add(instance.ClassName);
-                item.SubItems.Add(instance.ImagePath ?? instance.ProcessName);
-                _instanceList.Items.Add(item);
-                if (item.Text == selected) item.Selected = true;
-            }
-            _instanceList.EndUpdate();
-
-            if (!_busy) _statusLabel.Text = $"当前实例 {instances.Count} 个";
+            version = System.Diagnostics.FileVersionInfo.GetVersionInfo(path).FileVersion ?? string.Empty;
         }
-        catch (Exception ex)
+        catch
         {
-            Log($"刷新实例失败：{ex.Message}");
+            // 路径没了/权限不够都当没有版本
         }
+
+        lock (VersionCache)
+        {
+            VersionCache[path] = version;
+        }
+
+        return version;
     }
 
-    private void Log(string message)
+    private static string FriendlyReason(string message)
     {
-        if (IsDisposed) return;
-        if (InvokeRequired)
+        if (message.Contains("折叠", StringComparison.Ordinal))
+            return "提示：这个微信版本可能限制多开次数。可以先关掉全部微信，再点一次打开。";
+        if (message.Contains("环境异常", StringComparison.Ordinal))
+            return "提示：微信检测到了改动。请把微信升级到官方最新版后重试。";
+        if (message.Contains("超时", StringComparison.Ordinal))
+            return "提示：微信启动得比平时慢，等一两秒再看看列表。";
+        return "提示：先关掉全部微信再试一次，通常就好了。";
+    }
+
+    private async Task CloseAllAsync()
+    {
+        if (_busy) return;
+
+        var count = InstanceManager.GetInstances().Count;
+        if (count == 0)
         {
-            try { BeginInvoke(new Action<string>(Log), message); } catch (InvalidOperationException) { /* 窗体正在关闭 */ }
+            SetStatus("现在没有开着的微信", Theme.TextSecondary);
             return;
         }
 
-        _logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+        var answer = MessageBox.Show(
+            this,
+            $"要关闭全部 {count} 个微信吗？\r\n没发出去的消息会丢，聊天记录不受影响。",
+            "全部关闭",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+
+        if (answer != DialogResult.OK) return;
+
+        _busy = true;
+        UpdateLaunchButton();
+        SetStatus("正在关闭…", Theme.TextSecondary);
+
+        try
+        {
+            await Task.Run(() => Launcher.CloseAll(Log));
+        }
+        finally
+        {
+            _busy = false;
+            UpdateLaunchButton();
+            RefreshInstances();
+        }
+
+        SetStatus("已全部关闭", Theme.TextSecondary);
+    }
+
+    private void ToggleLog()
+    {
+        _logCollapsed = !_logCollapsed;
+        _logCard.Height = _logCollapsed ? LogCollapsedHeight : LogExpandedHeight;
+        _log.Visible = !_logCollapsed;
+        _logToggle.Text = _logCollapsed ? "展开" : "收起";
+        _logToggle.Invalidate();
+        LayoutCards();
+    }
+
+    private void RefreshInstances()
+    {
+        var instances = InstanceManager.GetInstances();
+
+        var selected = SelectedProduct();
+        _currentCount = selected is null ? 0 : Launcher.InstancesOf(selected.ExecutablePath).Count;
+        UpdateLaunchButton();
+
+        var signature = string.Join(",", instances.Select(i => i.Pid)) + "#" + _instancesCard.Width;
+
+        _instancesTitle.Text = instances.Count == 0 ? "已经打开" : $"已经打开 {instances.Count} 个";
+
+        _emptyHint.Visible = instances.Count == 0;
+        _rows.Visible = instances.Count > 0;
+        _closeAllButton.Enabled = instances.Count > 0;
+
+        if (signature == _rowSignature) return;
+        _rowSignature = signature;
+
+        _rows.SuspendLayout();
+        foreach (Control control in _rows.Controls)
+        {
+            control.Dispose();
+        }
+
+        _rows.Controls.Clear();
+
+        var width = Math.Max(260, _rows.ClientSize.Width - _rows.Padding.Horizontal - 20);
+        var index = 1;
+
+        foreach (var instance in instances)
+        {
+            var started = instance.StartTime is null
+                ? "正在启动"
+                : $"已经开了 {FormatDuration(DateTime.Now - instance.StartTime.Value)}";
+
+            var version = ProductVersionOf(instance.ImagePath);
+            var meta = version.Length > 0 ? $"{version} · {started}" : started;
+            _rows.Controls.Add(new InstanceRow(index++, instance.Pid, instance.Title, meta, instance.ImagePath ?? "")
+            {
+                Width = width,
+            });
+        }
+
+        _rows.ResumeLayout();
+
+        if (!_busy)
+        {
+            SetStatus(IdleStatusText(), Theme.TextSecondary);
+        }
+    }
+
+    private static string FormatDuration(TimeSpan span)
+    {
+        if (span.TotalMinutes < 1) return $"{Math.Max(1, (int)span.TotalSeconds)} 秒";
+        if (span.TotalHours < 1) return $"{(int)span.TotalMinutes} 分钟";
+        return $"{(int)span.TotalHours} 小时 {(int)span.Minutes} 分";
     }
 
     private void SaveConfig()
     {
-        if (!_config.Save(out var error)) Log($"配置保存失败：{error}");
+        _config.InstanceCount = _stepper.Value;
+        _config.LastProductKey = ProductKeyOf(SelectedProduct());
+
+        if (WindowState == FormWindowState.Normal)
+        {
+            _config.WindowWidth = Width;
+            _config.WindowHeight = Height;
+        }
+
+        if (!_config.Save(out var error))
+        {
+            Log($"配置没能保存：{error}");
+        }
     }
 
-    private sealed record StrategyItem(LaunchStrategy Value, string Text)
+    private static Icon? LoadAppIcon()
     {
-        public override string ToString() => Text;
+        try
+        {
+            var exe = Environment.ProcessPath;
+            return string.IsNullOrEmpty(exe) ? null : Icon.ExtractAssociatedIcon(exe);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>程序名与版本（避免多处手写）。</summary>
+internal static class WeChatBootInfo
+{
+    public static string Name => "微信多开启动器";
+
+    public static string Version
+    {
+        get
+        {
+            var v = typeof(WeChatBootInfo).Assembly.GetName().Version;
+            return v is null ? "v1.0" : $"v{v.Major}.{v.Minor}";
+        }
     }
 }

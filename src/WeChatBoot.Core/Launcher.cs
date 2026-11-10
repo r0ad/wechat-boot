@@ -257,7 +257,12 @@ public static class Launcher
     /// 只按进程名匹配是不够的：本机可能同时装了 3.x / 4.x，甚至两个不同目录的 4.x，
     /// 它们进程名都叫 Weixin.exe，混在一起会导致实例数永远对不上。
     /// </summary>
-    private static List<WeChatInstance> InstancesOf(string exePath)
+    /// <summary>
+    /// 统计某个微信安装（按可执行文件的目录区分）当前有多少个实例。
+    /// 界面上「已经开了几个 / 还要开几个」都基于这个方法，避免把两个不同版本的
+    /// Weixin.exe 混成一个产品来数。
+    /// </summary>
+    public static List<WeChatInstance> InstancesOf(string exePath)
     {
         var product = ProductName(exePath);
         var dir = Path.GetDirectoryName(Path.GetFullPath(exePath));

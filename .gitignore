@@ -16,3 +16,9 @@ wechatboot.config.json
 *.suo
 Thumbs.db
 desktop.ini
+
+# Visual Studio 打开解决方案时留下的东西
+Backup/
+UpgradeLog*.htm
+.vs/
+*.user

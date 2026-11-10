@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    控制台探针：不开界面就能跑完整逻辑，用来做自动化验证 / 排查。
+    用法见 tools/WeChatBoot.Probe/Program.cs 顶部注释。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WeChatBoot.Probe</AssemblyName>
+    <RootNamespace>WeChatBoot.Probe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WeChatBoot.Core\WeChatBoot.Core.csproj" />
+  </ItemGroup>
+
+</Project>

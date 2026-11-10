@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    核心逻辑（无界面）：自动寻址、互斥量守卫、句柄清理、实例枚举、启动校验。
+    单独成库的好处：控制台探针 tools/WeChatBoot.Probe 可以直接复用同一套逻辑做验证，
+    界面层只负责交互，不开窗也能测。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WeChatBoot.Core</AssemblyName>
+    <RootNamespace>WeChatBoot.Core</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

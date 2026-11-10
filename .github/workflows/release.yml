@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建发行版并发布 Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # 标签和 csproj 的版本对不上就别发，免得发行版里写着一个版本、包里是另一个
+      - name: 校验标签与版本号一致
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v', 'V')
+          [xml]$xml = Get-Content 'src/WeChatBoot.App/WeChatBoot.App.csproj'
+          $version = @($xml.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
+          Write-Host "tag=$tag  csproj=$version"
+          if ("$version" -ne "$tag") {
+            Write-Error "标签 v$tag 与 csproj 里的 Version=$version 不一致，先改版本号再打标签"
+            exit 1
+          }
+
+      - name: 轻量版（依赖 .NET 9 桌面运行时，约 340KB）
+        run: >
+          dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained false
+          -p:PublishSingleFile=true -o out/light
+
+      - name: 自包含版（免装运行时，约 52MB）
+        run: >
+          dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o out/standalone
+
+      - name: 打包发行资产
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/release | Out-Null
+          Copy-Item out/light/WeChatBoot.exe out/release/WeChatBoot.exe
+          Copy-Item README.md, LICENSE out/standalone/
+          Compress-Archive -Path out/standalone/* -DestinationPath out/release/WeChatBoot-win-x64-standalone.zip -Force
+          Get-ChildItem out/release | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}}
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 微信多开启动器 ${{ github.ref_name }}
+          body: |
+            ## 下载哪个？
+
+            | 文件 | 体积 | 说明 |
+            | --- | --- | --- |
+            | `WeChatBoot-win-x64-standalone.zip` | ~52MB | **推荐**，解压即用，不用装 .NET |
+            | `WeChatBoot.exe` | ~340KB | 需要电脑里已有 [.NET 9 桌面运行时](https://dotnet.microsoft.com/download/dotnet/9.0) |
+
+            双击 → 选微信版本 → 数量点成 3 → 点「打开 3 个微信」，各自扫码即可。
+
+            完整说明见 [README](https://github.com/${{ github.repository }}/blob/main/README.md)。
+          files: |
+            out/release/WeChatBoot.exe
+            out/release/WeChatBoot-win-x64-standalone.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true

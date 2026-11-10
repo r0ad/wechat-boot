@@ -1,125 +1,132 @@
-# 微信多开启动器（WeChatBoot）
+<div align="center">
 
-一个 Windows 桌面小工具：双击打开，点一下绿色按钮，微信就能同时开好几个窗口，分别登录不同账号。
+<img src="assets/icon/icon-1024.png" width="88" alt="图标">
 
-![主界面](docs/screenshot-main.png)
+# 微信多开启动器
 
-## 怎么用（三步）
+**点一下，同时开好几个微信。340KB，绿色免安装。**
 
-1. **双击 `WeChatBoot.exe`** —— 工具会自己把本机所有微信找出来（3.x / 4.x、装在 C 盘 D 盘都行、多个版本共存也行）。
-2. **选数量** —— 「数量」填本次**一共**要开几个（含已经开着的那个）。
-3. **点「打开 N 个微信」** —— 每个新窗口停在扫码页，各自登录即可。
+不注入 · 不 Hook · 不改微信客户端 · 不要管理员权限
 
-按钮上的数字是「还要开几个」：已经开着 2 个、你填 3，它就写「打开 1 个微信」；填的数字不大于已开数量时，按钮会写「已经开着，不用重复打开」。
+[![平台](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white)](#)
+[![运行时](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](#)
+[![许可](https://img.shields.io/badge/license-MIT-07C160)](#-许可)
+[![最新版本](https://img.shields.io/github/v/release/r0ad/wechat-boot?color=07C160&label=release)](https://github.com/r0ad/wechat-boot/releases/latest)
 
-列表实时显示已经开了几个、是什么版本、开了多久。不想开了点「全部关闭」。
+[**⬇ 下载**](https://github.com/r0ad/wechat-boot/releases/latest) · [原理](#-它怎么做到的) · [常见问题](#-常见问题) · [开发者文档](AGENTS.md)
 
-> 不用改任何设置。设置里那些东西，只有想折腾的时候才需要动。
+</div>
 
-## 界面上的三块
+<img src="docs/screenshot-main.png" width="560" alt="主界面">
 
-| 区域 | 说明 |
+## 🚀 三步就能用
+
+1. **双击** `WeChatBoot.exe`
+2. 选好微信版本，把数量点成 **3**
+3. 点绿色按钮 **「打开 3 个微信」** —— 三个登录窗口一起出现，各自扫码就行
+
+没有配置文件要改，没有参数要背。想改启动间隔、重试时间这些，点右上角「设置」：
+
+<img src="docs/screenshot-settings.png" width="420" alt="设置">
+
+## ⬇ 下载
+
+到 [Releases](https://github.com/r0ad/wechat-boot/releases/latest) 挑一个：
+
+| 版本 | 体积 | 需要装 .NET 吗 | 适合谁 |
+| --- | --- | --- | --- |
+| **`WeChatBoot-win-x64-standalone.zip`**（推荐） | ~52 MB | ❌ 不用 | 不想装运行时的绝大多数人 |
+| `WeChatBoot.exe` | ~340 KB | ✅ 需要 [.NET 9 桌面运行时](https://dotnet.microsoft.com/download/dotnet/9.0) | 电脑里已经有 .NET 9 的人 |
+
+> 都是单文件绿色版，解压/拷到哪都能跑，不写注册表、不装服务。
+
+## ✨ 为什么用它
+
+- **一次点一下，开够就停**：按「还要开几个」算，不会像别的脚本那样反复把已经开着的窗口再拉一遍。
+- **你关掉的不会被补回来**：中途觉得多了，随手关掉一个窗口，工具不会自作主张又给你开一个。
+- **不会被假成功骗到**：微信被单实例机制挡下时会先闪一个窗口再自杀。本工具要等窗口**稳定存活 5 秒**才算成功，失败会直说原因。
+- **自动找微信**：注册表 → 正在运行的进程 → 常见安装目录，三路一起找；找不到还能「手动指定」，路径会记住。
+- **多版本共存**：同时装了 4.2 和 3.9 也分得清，实例数不会互相算错（按安装目录分组）。
+- **零依赖、无侵入**：纯 C# + Win32 调用，没有第三方包；不注入、不 Hook、不改微信任何文件，微信检测不到「客户端被改」。
+- **有日志可查**：`wechatboot.log` 跟配置放一起，出问题直接发日志，不用截图猜。
+
+## 🔍 它怎么做到的
+
+微信判断「是不是已经有一个我在跑」，靠的是一个**会话级命名互斥量**：
+
+- 名字拿到了 → 把已有窗口还原到前台，自己退出（**不报错**，这就是「微信已在运行」的全部表现）
+- 名字没拿到（`ERROR_ACCESS_DENIED`）→ 单实例判断落空，正常启动
+
+本工具的做法：**先自己占住那个互斥量**，把它的 DACL 改成 Deny Everyone，再启动微信。微信拿不到「已存在」，也就不会折叠。
+
+互斥量名不写死，会从正在运行的微信进程句柄表里**自动发现**：
+
+| 版本 | 名字 |
 | --- | --- |
-| 顶部操作卡 | 「微信」下拉列出本机所有安装；「手动指定…」用来加扫描不到的；「扫描」重新找一遍；「数量」+ 绿色按钮负责开 |
-| 实例列表 | 按**主窗口**计数的真实实例（不是进程数——一个微信会开十几个进程）；切到托盘也照样算 |
-| 详细信息 | 默认收起；展开能看到每一步在干什么、失败的确切原因 |
+| 3.x | `_WeChat_App_Instance_Identity_Mutex_Name` |
+| 4.0.2+ | `XWeChat_XWEB_Instance_Identity_Mutex_Name` |
 
-## 设置里有什么（默认值够用）
+更完整的原理、失败模式时间线、踩过的坑：[AGENTS.md](AGENTS.md) · [docs/mechanism.md](docs/mechanism.md)
 
-点右上角「设置」。只有点「保存」才生效，点「取消」一律不改。
+## ✅ 兼容性（本机实测）
 
-| 项 | 默认 | 什么时候要动 |
+| 微信版本 | 多开 | 说明 |
 | --- | --- | --- |
-| 启动方式 | 自动（推荐） | 自动 = 先布防互斥量、不行再关句柄、最后直接启动。除非排查问题，否则不用动 |
-| 启动间隔 | 1200 毫秒 | 两次启动之间的等待。太快容易互相抢，机器慢就调大 |
-| 等待窗口超时 | 6000 毫秒 | 等新窗口出现的最长时间。老机器上开得慢就调大 |
-| 额外互斥量名 | 空 | 微信换了新版本、改了互斥量名导致多开失效时，手工补一行 |
-| 手动指定过的路径 | 空 | 「手动指定…」选过的路径会自动记在这里，可删 |
+| 4.2.0.51 | ✅ | 3 个实例稳定共存，长时间观察正常 |
+| 4.1.15.56 | ✅ | 与 4.2 可同时运行 |
+| 3.9.12.55 | ⚠️ | 能开出第二个，但 3.x 还有一层窗口检测，约 2 秒后自退 —— 如实标注为「半可用」，不做 hack |
 
-最下面是配置文件位置（`WeChatBoot.exe` 同目录的 `wechatboot.config.json`）和「打开配置文件夹」。
+## ❓ 常见问题
 
-## 特性
+**要管理员权限吗？**
+不要。全程普通用户权限。
 
-- **自动寻址**：注册表 → 运行中的进程 → 常见安装目录，三路一起找。
-- **手动维护**：扫不到就点「手动指定…」选一次 `Weixin.exe`，路径会记住。
-- **按安装区分**：本机同时装 4.1 和 4.2 时，两个 `Weixin.exe` 的实例数不会互相算错。
-- **不会被假成功骗到**：微信被单实例机制折叠时会先闪一个窗口再自杀，工具要等窗口稳定存活才判定成功（判据见下文「为什么等 5 秒」）。
-- **零依赖**：纯 C# + Win32 P/Invoke，没有第三方包；不改微信文件、不注入、不 Hook。
-- **点一次管一次**：按「要开几个」算差量，开够了就收手。中途你自己关掉一个窗口，它不会替你补回来（数量是你说了算）；开到一半后悔，按钮会变成「停止」。
-- **便携配置**：配置写在 exe 旁边（目录不可写时退回 `%APPDATA%\WeChatBoot`）；窗口大小也会记住。
-- **有日志可查**：界面「详细信息」里的内容同时写进 `wechatboot.log`（跟配置文件放一起，超过 512KB 自动重开），出问题直接发这个文件。
+**会不会改坏我的微信 / 被检测到？**
+不会。工具只在**内核对象层面**操作，不写微信目录、不改文件、不注入进程、不 Hook。微信看到的是一个正常的第二个自己。
 
-## 原理（一句话版）
+**为什么开出来的微信都要扫码？**
+多开只是让多个实例同时运行，登录态各自独立。同一账号的「免扫码」凭据只有一份，这个工具不碰登录数据，也不该碰。
 
-微信靠一个**会话级命名互斥量**判断「是不是已经有一个我在跑」：`CreateMutex` 拿到 `ERROR_ALREADY_EXISTS` 就把旧窗口还原到前台、自己退出——这就是多开失败的全部表现。
+**开出来的窗口过几分钟自己关了？**
+微信侧行为：**未登录**的实例闲置一段时间可能自行退出。尽快扫码登录即可；遇到就「全部关闭」重开。
 
-本工具先占住那个互斥量，把它的 DACL 改成 **Deny Everyone**。于是微信再次 `CreateMutex` 拿到的是 `ERROR_ACCESS_DENIED` 而不是「已存在」，单实例判断落空，正常启动。
+**为什么 3.x 只能算「半可用」？**
+3.x 除了互斥量还有 `FindWindow` 二次检查。要绕过就得改客户端或注入，本工具选择不做。
 
-- 3.x 名字：`_WeChat_App_Instance_Identity_Mutex_Name`
-- 4.x 名字：`XWeChat_XWEB_Instance_Identity_Mutex_Name`（4.0.2 起多了个 X 前缀）
+**杀毒软件提示风险？**
+单文件 exe 由 .NET 打包，部分杀软对「未签名的小工具」敏感。可以自行从源码编译（见下），或把文件加入信任。
 
-名字不写死：`MutexGuard.DiscoverIdentityMutexNames()` 会从正在运行的微信进程句柄表里把带 `Instance_Identity_Mutex` 的对象名捞出来，微信以后再改名也能兜住；钓不到时还能在设置里手动加。
+**支持 macOS / Linux 吗？**
+不支持。Windows 专属（Win32 窗口 + 命名内核对象）。
 
-**为什么等 5 秒**：布防成功也不代表真成了——被折叠的实例会先出现窗口、2~3 秒后才消失。所以判定标准是「新实例出现并且稳定存活 5 秒」，中途消失了就判失败并说明原因。
-
-更细的实测记录（各种失败模式、时间线、ACL 的两个坑）见 [docs/mechanism.md](docs/mechanism.md)，原始资料调研见 [docs/research/wechat-multi-instance.md](docs/research/wechat-multi-instance.md)。
-
-## 实测环境与已知限制
-
-| 项 | 结果 |
-| --- | --- |
-| 微信 4.2.0.51（`D:\Program Files\Tencent\Weixin`） | ✅ 2 个实例稳定共存（界面实测，保持启动器开着观察 >2 分钟） |
-| 微信 3.9.12.55（`D:\Program Files\Tencent\WeChat`） | ⚠️ 第二个实例能起来，但 3.x 还有一层 `FindWindow` 二次检查，约 2 秒后自行退出——3.x 多开属「半可用」，如实标注，不做 hack |
-| 4.1.15.56 与 4.2.0.51 同时安装 | ✅ 两个版本可各自运行（不同安装目录天然独立） |
-| 免扫码登录 | ❌ 多开出来的实例都要单独扫码；同一账号的「全局免扫码」只有一份设备凭据 |
-
-其他说明：
-
-- 多开的实例在**还没登录**的状态下，有时会在几分钟后自己退出（微信侧行为，与本工具无关）。遇到就先「全部关闭」、再重新打开，然后尽快扫码登录。
-- 微信 4.x 对「客户端被改过」敏感（会提示「由于环境异常，不能继续使用」）。本工具不修改任何微信文件，规避了这类风险。
-- 部分版本有「最多 4 个」之类的官方限制，超出后新实例登录会被拒，这与多开工具无关。
-- 需要 Windows 10/11 + .NET 9 桌面运行时。
-- 日志在 `wechatboot.log`（exe 同目录，或 `%APPDATA%\WeChatBoot`）；程序崩溃另有 `wechatboot-crash.log`。
-
-## 源码结构
-
-```
-src/WeChatBoot.Core/      # 全部逻辑，无 UI 依赖
-  NativeMethods.cs        # Win32 P/Invoke
-  WeChatLocator.cs        # 自动寻址：注册表 / 进程 / 常见目录
-  InstanceManager.cs      # 实例枚举（按主窗口，不按进程数）
-  MutexGuard.cs           # ACL 布防 + 互斥量名自动发现
-  HandleScanner.cs        # 遍历句柄表、关闭单实例互斥量（兜底）
-  Launcher.cs             # 启动 + 结果校验 + 全部关闭
-  AppConfig.cs            # 便携 JSON 配置
-src/WeChatBoot.App/       # WinForms 界面（纯代码，无设计器）
-  Theme.cs                # 配色与字体
-  Controls.cs             # 自绘控件：圆角卡片/胶囊按钮/加减器/下拉/实例行
-  MainForm.cs             # 主窗口
-  SettingsForm.cs         # 设置窗口
-  AppIcon.ico             # 图标（assets/icon/make_icon.py 生成）
-tools/WeChatBoot.Probe/   # 无界面诊断探针
-assets/icon/              # 图标生成脚本与 1024px 源图
-docs/                     # 原理调研 + 实测记录 + 截图
-scripts/build-release.cmd # 一键发布
-```
-
-## 构建
+## 🛠 自己编译
 
 ```bash
-dotnet build WeChatBoot.sln -c Release
-dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o dist
+git clone https://github.com/r0ad/wechat-boot.git
+cd wechat-boot
+dotnet build WeChatBoot.sln -c Release          # 需要 .NET 9 SDK
+scripts/build-release.cmd                        # 产出 dist/WeChatBoot.exe
 ```
 
-或直接跑 `scripts/build-release.cmd`，产物是 `dist\WeChatBoot.exe`（单文件，需已安装 .NET 9 桌面运行时）。
+想验证核心逻辑（不开界面）：`dotnet run --project tools/WeChatBoot.Probe -- instances`
 
-> 开发时 `WeChatBoot.exe --settings` 会直接把设置窗口当主窗口打开，方便截图和调样式。
+## 📁 仓库结构
 
-诊断探针（排查本机微信行为用）：
-
-```bash
-dotnet run --project tools/WeChatBoot.Probe -- detect
-dotnet run --project tools/WeChatBoot.Probe -- instances
-dotnet run --project tools/WeChatBoot.Probe -- guard --hold 5
-dotnet run --project tools/WeChatBoot.Probe -- launch --count 2
 ```
+src/WeChatBoot.Core/   核心：寻址、实例计数、互斥量布防、启动编排
+src/WeChatBoot.App/    WinForms 界面（单文件 exe 入口）
+tools/WeChatBoot.Probe/ 无界面诊断探针
+docs/                  原理、实测记录、调研笔记
+```
+
+细节与约定见 [AGENTS.md](AGENTS.md)。
+
+## ⚠️ 免责声明
+
+仅供个人在**自己设备**上同时登录多个微信账号使用。请遵守 [微信软件许可及服务协议](https://weixin.qq.com/agreement)。使用本工具产生的任何后果（包括但不限于账号限制）由使用者自行承担，作者不承担任何责任。
+
+本项目与腾讯公司无关，未获得其授权或认可。
+
+## 📄 许可
+
+[MIT](LICENSE)

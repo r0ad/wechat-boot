@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags-ignore: [ '**' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 编译并产出可运行 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: 还原
+        run: dotnet restore WeChatBoot.sln
+
+      - name: 编译（0 警告是基线）
+        run: dotnet build WeChatBoot.sln -c Release --no-restore
+
+      - name: 轻量版（依赖 .NET 9 桌面运行时）
+        run: >
+          dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained false
+          -p:PublishSingleFile=true -o out/light
+
+      - name: 自包含版（免装运行时）
+        run: >
+          dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o out/standalone
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatBoot-${{ github.sha }}
+          path: |
+            out/light/WeChatBoot.exe
+            out/standalone/WeChatBoot.exe
+          if-no-files-found: error

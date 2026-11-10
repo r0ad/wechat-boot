@@ -75,27 +75,79 @@ public static class Launcher
         switch (strategy)
         {
             case LaunchStrategy.MutexAcl:
-                return RunWithAcl(exePath, guard, verifyTimeoutMs, before, baseline, log, extraMutexNames, mutexOverride);
+            {
+                var onlyAcl = RunWithAcl(exePath, guard, verifyTimeoutMs, before, baseline, log, extraMutexNames, mutexOverride);
+                if (onlyAcl.Success) return onlyAcl;
+                return ArrivedLate(exePath, before, LateGraceMs, log) ? Late(LaunchStrategy.MutexAcl) : onlyAcl;
+            }
 
             case LaunchStrategy.CloseHandle:
-                return RunWithHandleClose(exePath, verifyTimeoutMs, before, baseline, log);
+            {
+                var onlyHandle = RunWithHandleClose(exePath, verifyTimeoutMs, before, baseline, log);
+                if (onlyHandle.Success) return onlyHandle;
+                return ArrivedLate(exePath, before, LateGraceMs, log) ? Late(LaunchStrategy.CloseHandle) : onlyHandle;
+            }
 
             case LaunchStrategy.Direct:
-                return SpawnAndVerify(exePath, LaunchStrategy.Direct, verifyTimeoutMs, before, baseline, log);
+            {
+                var onlyDirect = SpawnAndVerify(exePath, LaunchStrategy.Direct, verifyTimeoutMs, before, baseline, log);
+                if (onlyDirect.Success) return onlyDirect;
+                return ArrivedLate(exePath, before, LateGraceMs, log) ? Late(LaunchStrategy.Direct) : onlyDirect;
+            }
 
             default:
                 // 自动：ACL → 关句柄 → 直接启动
                 var acl = RunWithAcl(exePath, guard, verifyTimeoutMs, before, baseline, log, extraMutexNames, mutexOverride);
                 if (acl.Success) return acl;
+                if (ArrivedLate(exePath, before, LateGraceMs, log)) return Late(LaunchStrategy.MutexAcl);
                 log?.Invoke("ACL 方式未生效，改用关闭句柄方式重试…");
 
                 var handle = RunWithHandleClose(exePath, verifyTimeoutMs, before, baseline, log);
                 if (handle.Success) return handle;
+                if (ArrivedLate(exePath, before, LateGraceMs, log)) return Late(LaunchStrategy.CloseHandle);
                 log?.Invoke("关闭句柄方式未生效，直接启动（可能被单实例折叠）…");
 
-                return SpawnAndVerify(exePath, LaunchStrategy.Direct, verifyTimeoutMs, before, baseline, log);
+                var direct = SpawnAndVerify(exePath, LaunchStrategy.Direct, verifyTimeoutMs, before, baseline, log);
+                if (direct.Success) return direct;
+                if (ArrivedLate(exePath, before, LateGraceMs, log)) return Late(LaunchStrategy.Direct);
+                return direct;
         }
     }
+
+    /// <summary>
+    /// 超时不等于没开成。
+    ///
+    /// 微信冷启动实测要 7 秒上下才出主窗口，而默认只等 6 秒；一旦等不到就「判定失败、换策略重试」，
+    /// 那条已经发出去的启动请求照样会成功 —— 于是一个位置开出两个窗口。
+    /// 用户看到的现象就是「我明明没让多开，它自己又蹦出来一个」。
+    /// 所以每次换策略之前，都再等一小段，确认是不是只是窗口来晚了。
+    /// </summary>
+    private static bool ArrivedLate(string exePath, int before, int graceMs, Action<string>? log)
+    {
+        var deadline = Environment.TickCount64 + graceMs;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (InstancesOf(exePath).Count > before)
+            {
+                log?.Invoke("窗口来得比预期晚，算开成功了（不重试，避免多开一个）");
+                return true;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        return InstancesOf(exePath).Count > before;
+    }
+
+    /// <summary>换策略前再宽限这么久：确认是「窗口来晚了」而不是真失败（冷启动实测 7 秒上下）。</summary>
+    private const int LateGraceMs = 6000;
+
+    private static LaunchOutcome Late(LaunchStrategy strategy) => new()
+    {
+        Success = true,
+        UsedStrategy = strategy,
+        Message = "已启动（窗口出现得比预期晚一点）",
+    };
 
     private static LaunchOutcome RunWithAcl(
         string exePath,

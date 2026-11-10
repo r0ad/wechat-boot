@@ -13,7 +13,7 @@
     <ApplicationDefaultFont>Microsoft YaHei UI, 9.5pt</ApplicationDefaultFont>
     <Product>微信多开启动器</Product>
     <AssemblyTitle>微信多开启动器</AssemblyTitle>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <!-- 全是代码构建的界面，没有设计器，不需要设计器序列化分析 -->
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
     <FileVersion>1.1.0.0</FileVersion>

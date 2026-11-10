@@ -44,11 +44,19 @@ public sealed class MainForm : Form
     private IReadOnlyList<WeChatProduct> _products = Array.Empty<WeChatProduct>();
     private bool _busy;
     private int _currentCount;
+    private volatile bool _cancelRequested;
     private bool _logCollapsed = true;
     private string _rowSignature = string.Empty;
 
     private const int LogExpandedHeight = 126;
     private const int LogCollapsedHeight = 40;
+
+    private static readonly object FileLogLock = new();
+
+    /// <summary>文件日志跟配置文件放在一起（便携版就是 exe 同目录），用户容易找。</summary>
+    private static string FileLogPath => Path.Combine(
+        Path.GetDirectoryName(AppConfig.ConfigFilePath) ?? AppContext.BaseDirectory,
+        "wechatboot.log");
 
     public MainForm()
     {
@@ -393,9 +401,41 @@ public sealed class MainForm : Form
             return;
         }
 
+        // 界面日志只留最近一段：开几十个实例后无限追加会让 TextBox 越来越卡
+        if (_log.TextLength > 60000)
+        {
+            _log.Text = _log.Text[^30000..];
+        }
+
         _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
         _log.SelectionStart = _log.TextLength;
         _log.ScrollToCaret();
+
+        AppendToFile(message);
+    }
+
+    /// <summary>
+    /// 文件日志和界面日志同源：用户在群里喊「不好使」的时候，直接让他把 wechatboot.log 发过来，
+    /// 不用再靠截图猜。超过 512KB 就从新文件开始，免得日志长成几十兆。
+    /// </summary>
+    private static void AppendToFile(string message)
+    {
+        try
+        {
+            lock (FileLogLock)
+            {
+                var info = new FileInfo(FileLogPath);
+                if (info.Exists && info.Length > 512 * 1024) info.Delete();
+
+                File.AppendAllText(
+                    FileLogPath,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {message}{Environment.NewLine}");
+            }
+        }
+        catch
+        {
+            // 目录只读之类的写不进去就算了，日志不该影响开微信这件正事
+        }
     }
 
     private void Scan(bool verbose)
@@ -423,6 +463,20 @@ public sealed class MainForm : Form
         _productPicker.SetItems(items, select);
         _productPicker.DropDownEnabled = items.Count > 0;
 
+        // SetItems 是直接改索引、不触发 SelectionChanged 的，这里显式同步一次。
+        // 不同步就会留下「配置里记 A、界面选中 B」的暗坑：等下次启动按配置开，
+        // 开的和用户以为的不是同一个版本。
+        var chosen = SelectedProduct();
+        if (chosen is not null)
+        {
+            _config.LastProductKey = ProductKeyOf(chosen);
+            if (!string.IsNullOrEmpty(previous) &&
+                !string.Equals(chosen.ExecutablePath, previous, StringComparison.OrdinalIgnoreCase))
+            {
+                Log($"原来选的安装找不到了，已切换到 {chosen.ToDisplayText()}");
+            }
+        }
+
         if (items.Count == 0)
         {
             SetStatus("没找到微信，点「手动指定」", Theme.Warn);
@@ -440,13 +494,13 @@ public sealed class MainForm : Form
 
     private void UpdateLaunchButton()
     {
-        var ok = !_busy && SelectedProduct() is not null;
-        _launchButton.Enabled = ok;
+        _launchButton.Enabled = _busy || SelectedProduct() is not null;
 
         // 按钮说的是「还要开几个」，不是「总共几个」—— 已经开着的时候别让人以为点了没反应。
+        // 正在开的时候变成「停止」：中途反悔不用等它把 20 次都试完。
         var delta = _stepper.Value - _currentCount;
         _launchButton.Text = _busy
-            ? "正在打开…"
+            ? (_cancelRequested ? "正在停止…" : "停止")
             : delta > 0 ? $"打开 {delta} 个微信" : "已经开着，不用重复打开";
         _launchButton.Invalidate();
 
@@ -485,7 +539,14 @@ public sealed class MainForm : Form
 
     private async Task LaunchAsync()
     {
-        if (_busy) return;
+        // 正在开的时候按钮变成「停止」，再点一次就是取消，不再继续开
+        if (_busy)
+        {
+            _cancelRequested = true;
+            Log("收到停止请求，这一轮开完就停…");
+            SetStatus("正在停止…", Theme.TextSecondary);
+            return;
+        }
 
         var product = SelectedProduct();
         Log("收到启动请求");
@@ -497,6 +558,7 @@ public sealed class MainForm : Form
 
         var target = _stepper.Value;
         var before = Launcher.InstancesOf(product.ExecutablePath).Count;
+        _cancelRequested = false;
         _busy = true;
         UpdateLaunchButton();
         SetStatus("正在启动…", Theme.TextSecondary);
@@ -521,7 +583,12 @@ public sealed class MainForm : Form
         var now = Launcher.InstancesOf(product.ExecutablePath).Count;
         var opened = Math.Max(0, now - before);
 
-        if (ok && opened > 0)
+        if (_cancelRequested)
+        {
+            SetStatus($"已停止，这次新开了 {opened} 个（一共 {now} 个）", Theme.TextSecondary);
+            Log($"已停止：新开 {opened} 个，一共 {now} 个。");
+        }
+        else if (ok && opened > 0)
         {
             SetStatus($"✓ 新开了 {opened} 个，现在一共 {now} 个，扫码登录就行", Theme.AccentDark);
             Log($"完成：新开 {opened} 个，一共 {now} 个。");
@@ -542,43 +609,67 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
-    /// 反复「按一次启动」直到实例数达标。守卫必须活着覆盖整个过程：
-    /// deny DACL 依附在内核对象上，守卫一退出、对象没人持有就会被销毁（实测坑）。
+    /// 按一次只负责把「点下去那一刻还差的个数」开出来。
+    ///
+    /// 关键：循环条件用「已经成功开了几个」，不是「现在总共有几个」。
+    /// 用总数当条件会有个气人的后果——用户中途手动关掉一个窗口，程序看到数量不够，
+    /// 就又把那个位置补上（实测就是这样）。用户关窗口是他自己的决定，工具不替他纠偏。
+    ///
+    /// 守卫必须活着覆盖整个过程：deny DACL 依附在内核对象上，守卫一退出、对象没人持有就会被销毁。
     /// </summary>
     private bool RunLaunch(WeChatProduct product, int target)
     {
         var exe = product.ExecutablePath;
         using var guard = new MutexGuard();
 
-        for (var attempt = 1; attempt <= 20; attempt++)
+        var current = Launcher.InstancesOf(exe).Count;
+        var need = Math.Max(0, target - current);
+        if (need == 0)
         {
-            var current = Launcher.InstancesOf(exe).Count;
-            if (current >= target)
-            {
-                Log($"已有 {current} 个实例，达到目标");
-                return true;
-            }
-
-            Log($"开第 {current + 1} 个（{current}/{target}）");
-            var outcome = Launcher.Launch(
-                exe,
-                _config.Strategy,
-                guard,
-                _config.VerifyTimeoutMs,
-                Log,
-                _config.ExtraMutexNames);
-
-            if (!outcome.Success)
-            {
-                Log($"没成功：{outcome.Message}");
-                Log(FriendlyReason(outcome.Message));
-                return Launcher.InstancesOf(exe).Count >= target;
-            }
-
-            Thread.Sleep(Math.Clamp(_config.StaggerMs, 200, 5000));
+            Log($"已经有 {current} 个，不用再开");
+            return true;
         }
 
-        return Launcher.InstancesOf(exe).Count >= target;
+        Log($"现在 {current} 个，这次要新开 {need} 个");
+        var opened = 0;
+
+        for (var i = 0; i < need; i++)
+        {
+            if (_cancelRequested) break;
+
+            var done = false;
+
+            // 一个实例最多试两次：被单实例机制折叠时重试一次就够，不无限重试
+            for (var attempt = 1; attempt <= 2 && !done && !_cancelRequested; attempt++)
+            {
+                Log($"开第 {current + opened + 1} 个（第 {attempt} 次尝试）");
+                var outcome = Launcher.Launch(
+                    exe,
+                    _config.Strategy,
+                    guard,
+                    _config.VerifyTimeoutMs,
+                    Log,
+                    _config.ExtraMutexNames);
+
+                done = outcome.Success;
+                if (!done)
+                {
+                    Log($"没成功：{outcome.Message}");
+                    Log(FriendlyReason(outcome.Message));
+                }
+            }
+
+            if (!done) break;
+
+            opened++;
+            if (i < need - 1)
+            {
+                Thread.Sleep(Math.Clamp(_config.StaggerMs, 200, 5000));
+            }
+        }
+
+        Log($"这一轮结束：新开 {opened} 个（目标 {need} 个）");
+        return opened >= need;
     }
 
     /// <summary>把内核层的失败原因翻译成小白能照做的一句话。</summary>
@@ -771,7 +862,10 @@ internal static class WeChatBootInfo
         get
         {
             var v = typeof(WeChatBootInfo).Assembly.GetName().Version;
-            return v is null ? "v1.0" : $"v{v.Major}.{v.Minor}";
+
+            // 报 bug 的时候版本号要说全，1.1 和 1.1.1 是两次发布
+            if (v is null) return "v1.0";
+            return v.Build > 0 ? $"v{v.Major}.{v.Minor}.{v.Build}" : $"v{v.Major}.{v.Minor}";
         }
     }
 }

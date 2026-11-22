@@ -7,7 +7,7 @@ namespace WeChatBoot.App;
 /// <summary>圆角白色卡片容器，子控件默认白底。</summary>
 internal sealed class Card : Panel
 {
-    private int _radius = 14;
+    private int _radius = Theme.S(14);
 
     public Card()
     {
@@ -75,7 +75,7 @@ internal sealed class PillButton : Button
         UseVisualStyleBackColor = false;
         Cursor = Cursors.Hand;
         Font = Theme.BodyBold;
-        Size = new Size(120, 38);
+        Size = Theme.Sz(120, 38);
     }
 
     public ButtonKind Kind { get; set; } = ButtonKind.Primary;
@@ -174,7 +174,7 @@ internal sealed class Stepper : Control
             ControlStyles.ResizeRedraw,
             true);
         Cursor = Cursors.Hand;
-        Size = new Size(132, 38);
+        Size = Theme.Sz(132, 38);
         Font = Theme.BodyBold;
         BackColor = Color.White;
     }
@@ -201,9 +201,9 @@ internal sealed class Stepper : Control
 
     public event EventHandler? ValueChanged;
 
-    private Rectangle LeftZone => new(1, 1, 36, Height - 2);
+    private Rectangle LeftZone => new(Theme.S(1), Theme.S(1), Theme.S(36), Height - Theme.S(2));
 
-    private Rectangle RightZone => new(Width - 37, 1, 36, Height - 2);
+    private Rectangle RightZone => new(Width - Theme.S(37), Theme.S(1), Theme.S(36), Height - Theme.S(2));
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -212,7 +212,7 @@ internal sealed class Stepper : Control
         g.Clear(Parent?.BackColor ?? Theme.Card);
 
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var path = Theme.Round(rect, 10);
+        using var path = Theme.Round(rect, Theme.S(10));
         using (var fill = new SolidBrush(Color.White))
         {
             g.FillPath(fill, path);
@@ -223,8 +223,8 @@ internal sealed class Stepper : Control
             g.DrawPath(pen, path);
         }
 
-        if (_hoverLeft) Fill(g, LeftZone, 10, false);
-        if (_hoverRight) Fill(g, RightZone, 10, true);
+        if (_hoverLeft) Fill(g, LeftZone, Theme.S(10), false);
+        if (_hoverRight) Fill(g, RightZone, Theme.S(10), true);
 
         var zoneColor = Theme.TextSecondary;
         TextRenderer.DrawText(g, "−", Font, LeftZone, zoneColor,
@@ -232,7 +232,7 @@ internal sealed class Stepper : Control
         TextRenderer.DrawText(g, "+", Font, RightZone, zoneColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-        var mid = new Rectangle(36, 1, Width - 73, Height - 2);
+        var mid = new Rectangle(Theme.S(36), Theme.S(1), Width - Theme.S(73), Height - Theme.S(2));
         TextRenderer.DrawText(g, Value.ToString(), Font, mid, Theme.TextPrimary,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
@@ -309,7 +309,7 @@ internal sealed class PickerField : Control
             true);
         Cursor = Cursors.Hand;
         Font = Theme.BodyFont;
-        Size = new Size(280, 38);
+        Size = Theme.Sz(280, 38);
         BackColor = Color.White;
     }
 
@@ -349,7 +349,7 @@ internal sealed class PickerField : Control
         g.Clear(Parent?.BackColor ?? Theme.Card);
 
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var path = Theme.Round(rect, 10);
+        using var path = Theme.Round(rect, Theme.S(10));
         using (var fill = new SolidBrush(_hover && Items.Count > 0 ? Theme.RowHover : Color.White))
         {
             g.FillPath(fill, path);
@@ -360,7 +360,7 @@ internal sealed class PickerField : Control
             g.DrawPath(pen, path);
         }
 
-        var textRect = new Rectangle(14, 1, Width - 42, Height - 2);
+        var textRect = new Rectangle(Theme.S(14), Theme.S(1), Width - Theme.S(42), Height - Theme.S(2));
         TextRenderer.DrawText(
             g,
             _text,
@@ -369,7 +369,7 @@ internal sealed class PickerField : Control
             Selected is null ? Theme.TextSecondary : Theme.TextPrimary,
             TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-        var chev = new Rectangle(Width - 28, 1, 18, Height - 2);
+        var chev = new Rectangle(Width - Theme.S(28), Theme.S(1), Theme.S(18), Height - Theme.S(2));
         TextRenderer.DrawText(g, "▾", Font, chev, Theme.TextSecondary,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
@@ -447,8 +447,8 @@ internal sealed class InstanceRow : Panel
             ControlStyles.UserPaint |
             ControlStyles.ResizeRedraw,
             true);
-        Height = 46;
-        Margin = new Padding(0, 0, 0, 4);
+        Height = Theme.S(46);
+        Margin = Theme.Pad(0, 0, 0, 4);
         BackColor = Color.White;
         Cursor = Cursors.Default;
 
@@ -460,8 +460,8 @@ internal sealed class InstanceRow : Panel
             BackColor = Color.Transparent,
             Text = $"微信 #{index}",
             TextAlign = ContentAlignment.MiddleLeft,
-            Location = new Point(28, 4),
-            Size = new Size(240, 18),
+            Location = Theme.Pt(28, 4),
+            Size = Theme.Sz(240, 18),
         };
 
         _meta = new Label
@@ -472,8 +472,8 @@ internal sealed class InstanceRow : Panel
             BackColor = Color.Transparent,
             Text = meta,
             TextAlign = ContentAlignment.MiddleLeft,
-            Location = new Point(28, 22),
-            Size = new Size(340, 16),
+            Location = Theme.Pt(28, 22),
+            Size = Theme.Sz(340, 16),
         };
 
         _path = new Label
@@ -484,8 +484,8 @@ internal sealed class InstanceRow : Panel
             BackColor = Color.Transparent,
             Text = path,
             TextAlign = ContentAlignment.MiddleRight,
-            Location = new Point(180, 13),
-            Size = new Size(300, 18),
+            Location = Theme.Pt(180, 13),
+            Size = Theme.Sz(300, 18),
             AutoEllipsis = true,
         };
 
@@ -527,8 +527,8 @@ internal sealed class InstanceRow : Panel
         // 构造时先设 Height 会触发一次 OnResize，此时子控件还没建好
         if (_path is null || _meta is null) return;
 
-        _path.Location = new Point(Width - 312, 13);
-        _meta.Width = Math.Max(120, Width - 350);
+        _path.Location = new Point(Width - Theme.S(312), Theme.S(13));
+        _meta.Width = Math.Max(Theme.S(120), Width - Theme.S(350));
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -538,14 +538,14 @@ internal sealed class InstanceRow : Panel
         g.Clear(Parent?.BackColor ?? Theme.Card);
         using (var fill = new SolidBrush(BackColor))
         {
-            using var path = Theme.Round(new Rectangle(0, 0, Width - 1, Height - 1), 10);
+            using var path = Theme.Round(new Rectangle(0, 0, Width - 1, Height - 1), Theme.S(10));
             g.FillPath(fill, path);
         }
 
         using (var dot = new SolidBrush(Theme.Accent))
         {
             // 和标题第一行居中对齐（标题 Top=4、高 18）
-            g.FillEllipse(dot, 12, 9, 8, 8);
+            g.FillEllipse(dot, Theme.S(12), Theme.S(9), Theme.S(8), Theme.S(8));
         }
     }
 }

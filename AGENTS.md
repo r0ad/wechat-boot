@@ -38,6 +38,7 @@ src/WeChatBoot.App/         WinForms 界面（唯一入口 exe）
   Theme.cs                  颜色、字体、圆角路径
   Controls.cs               自绘控件：Card / PillButton / Stepper / PickerField / InstanceRow
 tools/WeChatBoot.Probe/     无界面诊断探针（见 §7）
+tools/WeChatBoot.VisualCheck/ 高 DPI 视觉回归：按 1x/1.5x/2x 渲染截图并量几何（见 §7.1）
 docs/mechanism.md           原理与实测记录（含失败模式时间线）
 docs/research/              原始资料调研笔记
 scripts/build-release.cmd   本地一键发布
@@ -103,6 +104,15 @@ scripts/build-release.cmd   本地一键发布
    `NullReferenceException`（曾经把实例行整片打死，靠 `wechatboot-crash.log` 抓到的）。
 9. **`PickerField.SetItems` 不触发 `SelectionChanged`**：它直接改索引。调用方要显式同步
    `_config.LastProductKey`，否则留下「配置记 A、界面选 B」的暗坑。
+10. **高 DPI 别指望 WinForms 的 AutoScale**：`AutoScaleMode.Dpi` 只管「构造那一刻已经在父容器里」
+    的控件，运行时 new 出来的实例行、自绘控件内部的偏移一律不管；而字体用 pt 创建又会被系统
+    DPI 放大。两者叠加就是「字放大了、格子没放大」→ 200% 下文字挤成一团、标题被裁掉
+    （v1.1.1 的真实 bug，用户截图那次）。现在口径统一在 `Theme`：
+    坐标一律写 96 DPI 的设计值，落界面时过 `Theme.S() / Sz() / Pt() / Pad()`；
+    字体用 `GraphicsUnit.Pixel` 且字号同样乘缩放比；窗体和控件全部 `AutoScaleMode.None`。
+    **新加控件时只要写了数字就得过 Theme，漏一个就错一个。**
+    跨不同 DPI 的显示器时用 `SystemAware`（系统位图拉伸，略糊但不会错位），
+    别换回 `PerMonitorV2` —— 窗口会被系统重排而我们的常量布局不会跟着变。
 
 ## 7. 探针（`tools/WeChatBoot.Probe`）
 
@@ -127,6 +137,20 @@ dotnet run --project tools/WeChatBoot.Probe -- <命令>
 | `selftest` | 五项自检 |
 
 `--strategy` 可选：`auto`（默认）/ `acl` / `handle` / `direct`。
+
+## 7.1 高 DPI 视觉回归（`tools/WeChatBoot.VisualCheck`）
+
+```bash
+dotnet run --project tools/WeChatBoot.VisualCheck -- artifacts/visual
+```
+
+把主界面、设置页、实例行按 **1x / 1.5x / 2x** 离屏渲染成 PNG，同时量两件事：
+
+1. 每个带文字的控件，文字行高是否超过控件高度（超过 = 被裁 / 挤在一起，就是 §6.10 那个 bug）；
+2. 同一容器里非 Dock 的兄弟控件是否重叠（`手动指定` 和 `扫描` 曾经重叠 8px）。
+
+**退出码非 0 就是回归**，别只看图。改任何 `Layout*()`、`Controls.cs` 里的坐标后必须跑一遍。
+本机是 96 DPI 的机器也能跑 —— 缩放靠 `Theme.ApplyScale()` 模拟，不依赖显示器。
 
 ## 8. 构建与发布
 
@@ -154,6 +178,9 @@ dotnet publish src/WeChatBoot.App -c Release -r win-x64 --self-contained true \
 - **自绘要处理悬浮/按下态**，并且 `OnPaint` 先 `g.Clear(Parent.BackColor)` 再填圆角，
   否则圆角外会留残影。
 - 配色见 `Theme.cs`：主色 `#07C160`，背景 `#F4F6F9`，卡片纯白，正文 `#1B1F24`。
+- **尺寸只写设计值**：不要写死 96 DPI 的像素，也不要给字体写 pt —— 坐标过
+  `Theme.S()/Sz()/Pt()/Pad()`，字体用 `Theme.TitleFont/HeaderFont/BodyFont/SmallFont`。
+  新增窗口或控件时 `AutoScaleMode.None`，并在 `Layout*()` 里统一排。
 
 ## 10. 手工验收清单
 

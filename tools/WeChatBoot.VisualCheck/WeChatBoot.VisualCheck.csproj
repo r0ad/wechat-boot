@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    高 DPI 视觉回归：把主界面 / 设置页按 1x、1.5x、2x 离屏渲染成 PNG。
+    这台机器是 96 DPI，没法真的切到 200%，所以靠 Theme.ApplyScale() 模拟缩放，
+    看的就是「布局和文字是不是同一个倍率」。用法见 Program.cs 顶部。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WeChatBoot.VisualCheck</AssemblyName>
+    <RootNamespace>WeChatBoot.VisualCheck</RootNamespace>
+    <!--
+      和主程序用同一个图标：MainForm 的 logo 取的是 Form.Icon，
+      不设这一项的话截图里的 logo 会是 .NET 默认图标（白纸 + 蓝块），看起来像「logo 没了」。
+    -->
+    <ApplicationIcon>..\..\src\WeChatBoot.App\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WeChatBoot.App\WeChatBoot.App.csproj" />
+    <ProjectReference Include="..\..\src\WeChatBoot.Core\WeChatBoot.Core.csproj" />
+  </ItemGroup>
+
+</Project>

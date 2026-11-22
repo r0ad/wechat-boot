@@ -9,6 +9,7 @@ namespace WeChatBoot.App;
 /// 启动方式、间隔、超时、额外互斥量名、手动指定过的路径。
 /// 只有点保存才写回配置，点取消一律不改。
 /// 布局全部用显式坐标（不用 Dock/Anchor）—— 纯代码界面下 Dock 的排列顺序不可靠。
+/// 坐标是 96 DPI 的设计像素，落界面时统一过 Theme.S()/Theme.Sz()，高 DPI 才不会挤。
 /// </summary>
 internal sealed class SettingsForm : Form
 {
@@ -66,7 +67,7 @@ internal sealed class SettingsForm : Form
         AddCaption("启动方式", Pad, y);
         y += 24;
         _strategy.SetItems(StrategyItems(), 0);
-        _strategy.SetBounds(Pad, y, 340, 36);
+        _strategy.SetBounds(Theme.S(Pad), Theme.S(y), Theme.S(340), Theme.S(36));
         y += 50;
 
         // 两个数值项并排
@@ -78,13 +79,13 @@ internal sealed class SettingsForm : Form
         _stagger.Max = 5000;
         _stagger.Step = 100;
         _stagger.Font = Theme.BodyFont;
-        _stagger.SetBounds(Pad, y, FieldWidth + 16, FieldHeight);
+        _stagger.SetBounds(Theme.S(Pad), Theme.S(y), Theme.S(FieldWidth + 16), Theme.S(FieldHeight));
 
         _timeout.Min = 2000;
         _timeout.Max = 30000;
         _timeout.Step = 500;
         _timeout.Font = Theme.BodyFont;
-        _timeout.SetBounds(Col2X, y, FieldWidth + 16, FieldHeight);
+        _timeout.SetBounds(Theme.S(Col2X), Theme.S(y), Theme.S(FieldWidth + 16), Theme.S(FieldHeight));
         y += 44;
 
         AddLabel("两次启动之间等多久，太短容易互相抢", Pad, y, 236, Theme.SmallFont, Theme.TextSecondary);
@@ -101,7 +102,7 @@ internal sealed class SettingsForm : Form
         _extraMutexes.BorderStyle = BorderStyle.FixedSingle;
         _extraMutexes.ScrollBars = ScrollBars.Vertical;
         _extraMutexes.Font = Theme.LogFont;
-        _extraMutexes.SetBounds(Pad, y, ContentWidth, 72);
+        _extraMutexes.SetBounds(Theme.S(Pad), Theme.S(y), Theme.S(ContentWidth), Theme.S(72));
         y += 88;
 
         // 手动指定过的路径
@@ -111,7 +112,7 @@ internal sealed class SettingsForm : Form
         _recentPaths.Font = Theme.SmallFont;
         _recentPaths.BorderStyle = BorderStyle.FixedSingle;
         _recentPaths.IntegralHeight = false;
-        _recentPaths.SetBounds(Pad, y, ContentWidth, 76);
+        _recentPaths.SetBounds(Theme.S(Pad), Theme.S(y), Theme.S(ContentWidth), Theme.S(76));
         y += 84;
 
         AddLabel("点「手动指定…」选过的路径会记在这里，符号链接也行。", Pad, y + 4, ContentWidth - 100, Theme.SmallFont, Theme.TextSecondary);
@@ -121,8 +122,8 @@ internal sealed class SettingsForm : Form
             Text = "删除选中",
             Kind = ButtonKind.Ghost,
             Font = Theme.SmallFont,
-            Size = new Size(84, 26),
-            Location = new Point(Pad + ContentWidth - 84, y),
+            Size = Theme.Sz(84, 26),
+            Location = new Point(Theme.S(Pad + ContentWidth - 84), Theme.S(y)),
         };
         removePath.Click += (_, _) =>
         {
@@ -136,7 +137,7 @@ internal sealed class SettingsForm : Form
         _configPath.ForeColor = Theme.TextSecondary;
         _configPath.AutoSize = false;
         _configPath.AutoEllipsis = true;
-        _configPath.SetBounds(Pad, y, ContentWidth, 18);
+        _configPath.SetBounds(Theme.S(Pad), Theme.S(y), Theme.S(ContentWidth), Theme.S(18));
         _configPath.Text = $"配置文件：{AppConfig.ConfigFilePath}";
         y += 30;
 
@@ -146,8 +147,8 @@ internal sealed class SettingsForm : Form
             Text = "打开配置文件夹",
             Kind = ButtonKind.Ghost,
             Font = Theme.SmallFont,
-            Size = new Size(124, 32),
-            Location = new Point(Pad, y),
+            Size = Theme.Sz(124, 32),
+            Location = new Point(Theme.S(Pad), Theme.S(y)),
         };
         openFolder.Click += (_, _) => OpenConfigFolder();
 
@@ -155,8 +156,8 @@ internal sealed class SettingsForm : Form
         {
             Text = "恢复默认",
             Kind = ButtonKind.Ghost,
-            Size = new Size(92, 32),
-            Location = new Point(Pad + ContentWidth - 92 - 88 - 96 - 20, y),
+            Size = Theme.Sz(92, 32),
+            Location = new Point(Theme.S(Pad + ContentWidth - 92 - 88 - 96 - 20), Theme.S(y)),
         };
         reset.Click += (_, _) => ResetDefaults();
 
@@ -164,8 +165,8 @@ internal sealed class SettingsForm : Form
         {
             Text = "取消",
             Kind = ButtonKind.Ghost,
-            Size = new Size(88, 32),
-            Location = new Point(Pad + ContentWidth - 88 - 96 - 10, y),
+            Size = Theme.Sz(88, 32),
+            Location = new Point(Theme.S(Pad + ContentWidth - 88 - 96 - 10), Theme.S(y)),
             DialogResult = DialogResult.Cancel,
         };
 
@@ -173,8 +174,8 @@ internal sealed class SettingsForm : Form
         {
             Text = "保存",
             Kind = ButtonKind.Primary,
-            Size = new Size(96, 32),
-            Location = new Point(Pad + ContentWidth - 96, y),
+            Size = Theme.Sz(96, 32),
+            Location = new Point(Theme.S(Pad + ContentWidth - 96), Theme.S(y)),
         };
         save.Click += (_, _) => SaveAndClose();
 
@@ -185,7 +186,7 @@ internal sealed class SettingsForm : Form
         });
 
         y += 32 + 26;
-        ClientSize = new Size(Pad * 2 + ContentWidth, y);
+        ClientSize = new Size(Theme.S(Pad * 2 + ContentWidth), Theme.S(y));
 
         CancelButton = cancel;
         AcceptButton = save;
@@ -199,6 +200,9 @@ internal sealed class SettingsForm : Form
 
     private void AddLabel(string text, int x, int y, int width, Font font, Color color)
     {
+        // 高度按字体实际行高给：标题用 20px 字号，固定 20 高的框会把字裁掉一截
+        var height = Math.Max(Theme.S(20), TextRenderer.MeasureText(text, font).Height);
+
         Controls.Add(new Label
         {
             Text = text,
@@ -206,8 +210,8 @@ internal sealed class SettingsForm : Form
             ForeColor = color,
             AutoSize = false,
             UseMnemonic = false,
-            Size = new Size(width, 20),
-            Location = new Point(x, y),
+            Size = new Size(Theme.S(width), height),
+            Location = new Point(Theme.S(x), Theme.S(y)),
         });
     }
 

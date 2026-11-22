@@ -8,20 +8,30 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>WeChatBoot</AssemblyName>
     <RootNamespace>WeChatBoot.App</RootNamespace>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!--
+      SystemAware 而不是 PerMonitorV2：界面缩放由 Theme 手工做（一次性读系统 DPI），
+      跨到另一个不同 DPI 的显示器时由系统位图拉伸（略糊），但绝不会出现「字放大了、格子没放大」。
+      PerMonitorV2 下窗口会被系统重新缩放，而我们这套常量布局不会跟着变，反而会错位。
+    -->
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <ApplicationDefaultFont>Microsoft YaHei UI, 9.5pt</ApplicationDefaultFont>
     <Product>微信多开启动器</Product>
     <AssemblyTitle>微信多开启动器</AssemblyTitle>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <!-- 全是代码构建的界面，没有设计器，不需要设计器序列化分析 -->
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
-    <FileVersion>1.1.0.0</FileVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <Copyright>MIT</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WeChatBoot.Core\WeChatBoot.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 视觉回归工具要能直接 new 出内部控件（InstanceRow / SettingsForm / Theme） -->
+    <InternalsVisibleTo Include="WeChatBoot.VisualCheck" />
   </ItemGroup>
 
 </Project>

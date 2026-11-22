@@ -42,6 +42,15 @@ public sealed class AppConfig
     /// <summary>窗口高度（记住上次大小）。</summary>
     public int WindowHeight { get; set; } = 600;
 
+    /// <summary>
+    /// 布局口径版本。2 = 窗口尺寸按 96 DPI 的逻辑像素存（1.2 起）；
+    /// 0/1 是旧版，存的是外层窗口的物理像素。只在换算那一次用到。
+    /// </summary>
+    public const int CurrentLayoutVersion = 2;
+
+    /// <summary>配置里记录的布局口径版本（旧配置没有这个字段，反序列化后是 0）。</summary>
+    public int LayoutVersion { get; set; }
+
     /// <summary>高级：额外需要布防的互斥量名（一般留空）。</summary>
     public List<string> ExtraMutexNames { get; set; } = new();
 
@@ -79,7 +88,7 @@ public sealed class AppConfig
             }
         }
 
-        var fresh = new AppConfig();
+        var fresh = new AppConfig { LayoutVersion = CurrentLayoutVersion };
         fresh.Normalize();
         return fresh;
     }
@@ -130,6 +139,22 @@ public sealed class AppConfig
         }
 
         RecentPaths = dedup.Take(8).ToList();
+    }
+
+    /// <summary>
+    /// 把旧版配置里的窗口尺寸（外层窗口的物理像素）换算成新版口径（96 DPI 逻辑像素）。
+    /// 200% 的机器上旧值会翻倍，不换算就会开出一个占满屏幕的窗口。
+    /// 外层比客户区多一圈边框，差十几像素，忽略。返回是否真的换算过。
+    /// </summary>
+    public bool MigrateToLogicalWindowSize(float scale)
+    {
+        if (LayoutVersion >= CurrentLayoutVersion) return false;
+
+        var s = scale > 0 ? scale : 1f;
+        WindowWidth = (int)Math.Round(WindowWidth / s);
+        WindowHeight = (int)Math.Round(WindowHeight / s);
+        LayoutVersion = CurrentLayoutVersion;
+        return true;
     }
 
     /// <summary>记住一个路径（手动维护列表）。</summary>

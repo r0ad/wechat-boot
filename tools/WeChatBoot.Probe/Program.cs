@@ -334,7 +334,7 @@ internal static class Program
     private static int ParseInt(string? text, int fallback) =>
         int.TryParse(text, out var v) ? v : fallback;
 
-    private static int Free(Dictionary<string, string> options)
+    private static int Free(Dictionary<string, string?> options)
     {
         var keyword = options.GetValueOrDefault("keyword") ?? MutexGuard.DiscoveryKeyword;
         var procs = InstanceManager.GetFamilyProcesses();

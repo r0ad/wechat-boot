@@ -62,16 +62,23 @@ public sealed class MainForm : Form
     {
         _config = AppConfig.Load();
 
+        // 旧配置（1.1.x 及以前）存的是「外层窗口的物理像素」，1.2 起按 96 DPI 逻辑像素存，
+        // 不换算的话 200% 的机器上会开出一个占满屏幕的窗口。
+        _config.MigrateToLogicalWindowSize(Theme.Scale);
+
         Text = "微信多开启动器";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(
+        // 窗口尺寸按「逻辑像素」存储（96 DPI 口径）：换到 200% 的屏幕上还是看着一样大
+        ClientSize = Theme.Sz(
             Math.Clamp(_config.WindowWidth, 560, 1400),
             Math.Clamp(_config.WindowHeight, 480, 1200));
-        MinimumSize = new Size(560, 470);
+        MinimumSize = Theme.Sz(560, 470);
         BackColor = Theme.Bg;
         Font = Theme.BodyFont;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        AutoScaleDimensions = new SizeF(96F, 96F);
+
+        // 缩放全部交给 Theme：WinForms 的 AutoScale 只管「构造那一刻已经在父容器里」的控件，
+        // 运行时 new 出来的实例行、自绘控件内部偏移一律漏掉，正是本次高 DPI 文字挤压的根因。
+        AutoScaleMode = AutoScaleMode.None;
         DoubleBuffered = true;
         Icon = LoadAppIcon();
 
@@ -102,7 +109,7 @@ public sealed class MainForm : Form
 
     private void BuildHeader()
     {
-        _header.SetBounds(0, 0, ClientSize.Width, 60);
+        _header.SetBounds(0, 0, ClientSize.Width, HeaderHeight);
         _header.BackColor = Color.White;
         _header.Paint += (_, e) =>
         {
@@ -110,11 +117,16 @@ public sealed class MainForm : Form
             e.Graphics.DrawLine(pen, 0, _header.Height - 1, _header.Width, _header.Height - 1);
         };
 
-        _logo.Location = new Point(18, 15);
-        _logo.Size = new Size(30, 30);
+        _logo.Location = Theme.Pt(18, 15);
+        _logo.Size = Theme.Sz(30, 30);
         _logo.SizeMode = PictureBoxSizeMode.Zoom;
         _logo.BackColor = Color.Transparent;
-        _logo.Image = Icon?.ToBitmap();
+        // 按当前缩放后的尺寸重新取图标帧，否则 200% 下是把 32px 的图放大两倍（糊）。
+        if (Icon is { } appIcon)
+        {
+            using var scaled = new Icon(appIcon, Theme.Sz(30, 30));
+            _logo.Image = scaled.ToBitmap();
+        }
 
         var title = new Label
         {
@@ -123,7 +135,7 @@ public sealed class MainForm : Form
             ForeColor = Theme.TextPrimary,
             BackColor = Color.White,
             AutoSize = true,
-            Location = new Point(58, 19),
+            Location = Theme.Pt(58, 19),
         };
 
         _statusLabel.AutoSize = false;
@@ -132,15 +144,15 @@ public sealed class MainForm : Form
         _statusLabel.ForeColor = Theme.TextSecondary;
         _statusLabel.BackColor = Color.White;
         _statusLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _statusLabel.Location = new Point(ClientSize.Width - 428, 21);
-        _statusLabel.Size = new Size(320, 18);
+        _statusLabel.Location = new Point(ClientSize.Width - Theme.S(428), Theme.S(21));
+        _statusLabel.Size = Theme.Sz(320, 18);
 
         _settingsButton.Text = "设置";
         _settingsButton.Kind = ButtonKind.Ghost;
         _settingsButton.Font = Theme.SmallFont;
-        _settingsButton.Size = new Size(64, 28);
+        _settingsButton.Size = Theme.Sz(64, 28);
         _settingsButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _settingsButton.Location = new Point(ClientSize.Width - 88, 16);
+        _settingsButton.Location = new Point(ClientSize.Width - Theme.S(88), Theme.S(16));
         _settingsButton.Click += (_, _) => OpenSettings();
 
         _header.Controls.AddRange(new Control[] { _logo, title, _statusLabel, _settingsButton });
@@ -163,56 +175,96 @@ public sealed class MainForm : Form
         Resize += (_, _) => LayoutShell();
     }
 
-    /// <summary>外壳：顶栏固定 60，其余全给 body。</summary>
+    /// <summary>顶栏设计高度（96 DPI 下 60）。</summary>
+    private static int HeaderHeight => Theme.S(60);
+
+    /// <summary>外壳：顶栏固定高度，其余全给 body。</summary>
     private void LayoutShell()
     {
         var width = ClientSize.Width;
         var height = ClientSize.Height;
+        var header = HeaderHeight;
 
-        _header.Bounds = new Rectangle(0, 0, width, 60);
-        _body.Bounds = new Rectangle(0, 60, width, Math.Max(0, height - 60));
+        _header.Bounds = new Rectangle(0, 0, width, header);
+        _body.Bounds = new Rectangle(0, header, width, Math.Max(0, height - header));
         LayoutCards();
     }
 
     /// <summary>
     /// 三张卡片显式摆放：上（操作）、中（列表，吃掉剩余高度）、下（日志）。
     /// 不用 Dock 是因为 Fill + Top 的叠放顺序依赖 z 序，实测会互相盖住。
+    /// 所有数字都是 96 DPI 的设计值，过一遍 Theme.S() —— 这里是高 DPI 下唯一的口径。
     /// </summary>
     private void LayoutCards()
     {
-        const int pad = 16;
-        const int gap = 10;
-        const int topPad = 14;
-        const int bottomPad = 14;
+        var pad = Theme.S(16);
+        var gap = Theme.S(10);
+        var topPad = Theme.S(14);
+        var bottomPad = Theme.S(14);
+        var actionHeight = Theme.S(112);
+        var minInstances = Theme.S(120);
 
-        var width = Math.Max(260, _body.ClientSize.Width - pad * 2);
+        var width = Math.Max(Theme.S(260), _body.ClientSize.Width - pad * 2);
         var height = _body.ClientSize.Height;
-        var logHeight = _logCollapsed ? LogCollapsedHeight : LogExpandedHeight;
+        var logHeight = _logCollapsed ? Theme.S(LogCollapsedHeight) : Theme.S(LogExpandedHeight);
 
-        _actionCard.Bounds = new Rectangle(pad, topPad, width, 112);
+        _actionCard.Bounds = new Rectangle(pad, topPad, width, actionHeight);
+        LayoutActionCard();
 
-        var logTop = Math.Max(topPad + 112 + gap + 120, height - bottomPad - logHeight);
+        var logTop = Math.Max(topPad + actionHeight + gap + minInstances, height - bottomPad - logHeight);
         _logCard.Bounds = new Rectangle(pad, logTop, width, logHeight);
 
-        var instancesTop = topPad + 112 + gap;
+        var instancesTop = topPad + actionHeight + gap;
         _instancesCard.Bounds = new Rectangle(
             pad,
             instancesTop,
             width,
-            Math.Max(120, logTop - gap - instancesTop));
+            Math.Max(minInstances, logTop - gap - instancesTop));
+    }
+
+    /// <summary>
+    /// 操作卡内部：右对齐的三件（手动指定 / 扫描 / 启动）按当前宽度重排。
+    /// 早先靠 Anchor + 创建时的宽度算坐标，高 DPI 下右边界对不上，
+    /// 而且「手动指定」和「扫描」本身重叠了 8px —— 这里改成显式算。
+    /// </summary>
+    private void LayoutActionCard()
+    {
+        var width = _actionCard.Width;
+        if (width <= 0) return;
+
+        var margin = Theme.S(16);
+        var rescanWidth = Theme.S(60);
+        var manualWidth = Theme.S(88);
+        var gap = Theme.S(8);
+
+        // 右起：扫描贴右边距，「手动指定」在它左边，中间留 8px
+        var rescanX = width - margin - rescanWidth;
+        var manualX = rescanX - gap - manualWidth;
+        var pickerRight = manualX - gap;
+
+        var pickerX = Theme.S(52);
+        var pickerWidth = Math.Max(Theme.S(120), pickerRight - pickerX);
+
+        _productPicker.Bounds = new Rectangle(pickerX, Theme.S(11), pickerWidth, Theme.S(36));
+        _manualButton.Bounds = new Rectangle(manualX, Theme.S(11), manualWidth, Theme.S(36));
+        _rescanButton.Bounds = new Rectangle(rescanX, Theme.S(11), rescanWidth, Theme.S(36));
+
+        if (_launchButton.Parent is not null)
+        {
+            var launchWidth = Theme.S(180);
+            _launchButton.Bounds = new Rectangle(width - margin - launchWidth, Theme.S(62), launchWidth, Theme.S(40));
+        }
     }
 
     /// <summary>一张卡搞定「用哪个 + 开几个 + 启动」，两行排布，尽量占地方少。</summary>
     private void BuildActionCard()
     {
-        _actionCard.SetBounds(0, 0, CardWidth(), 112);
+        _actionCard.SetBounds(0, 0, CardWidth(), Theme.S(112));
 
         var productCaption = Caption("微信");
-        productCaption.Location = new Point(16, 15);
+        productCaption.Location = Theme.Pt(16, 15);
 
-        _productPicker.Location = new Point(52, 11);
-        _productPicker.Size = new Size(_actionCard.Width - 52 - 16 - 148, 36);
-        _productPicker.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _productPicker.Bounds = new Rectangle(Theme.S(52), Theme.S(11), Theme.S(400), Theme.S(36));
         _productPicker.SelectionChanged += (_, _) =>
         {
             _config.LastProductKey = ProductKeyOf(SelectedProduct());
@@ -224,24 +276,20 @@ public sealed class MainForm : Form
         _manualButton.Text = "手动指定";
         _manualButton.Kind = ButtonKind.Ghost;
         _manualButton.Font = Theme.SmallFont;
-        _manualButton.Size = new Size(76, 36);
-        _manualButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _manualButton.Location = new Point(_actionCard.Width - 144, 11);
+        _manualButton.Size = Theme.Sz(88, 36);
         _manualButton.Click += (_, _) => PickManually();
 
         _rescanButton.Text = "扫描";
         _rescanButton.Kind = ButtonKind.Ghost;
         _rescanButton.Font = Theme.SmallFont;
-        _rescanButton.Size = new Size(60, 36);
-        _rescanButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _rescanButton.Location = new Point(_actionCard.Width - 76, 11);
+        _rescanButton.Size = Theme.Sz(60, 36);
         _rescanButton.Click += (_, _) => Scan(verbose: true);
 
         var countCaption = Caption("数量");
-        countCaption.Location = new Point(16, 71);
+        countCaption.Location = Theme.Pt(16, 71);
 
-        _stepper.Location = new Point(52, 64);
-        _stepper.Size = new Size(118, 36);
+        _stepper.Location = Theme.Pt(52, 64);
+        _stepper.Size = Theme.Sz(118, 36);
         _stepper.Min = 1;
         _stepper.Max = 20;
         _stepper.ValueChanged += (_, _) =>
@@ -257,13 +305,11 @@ public sealed class MainForm : Form
             ForeColor = Theme.TextSecondary,
             BackColor = Color.White,
             AutoSize = true,
-            Location = new Point(180, 74),
+            Location = Theme.Pt(180, 74),
         };
 
         _launchButton.Kind = ButtonKind.Primary;
-        _launchButton.Size = new Size(180, 40);
-        _launchButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _launchButton.Location = new Point(_actionCard.Width - 196, 62);
+        _launchButton.Size = Theme.Sz(180, 40);
         _launchButton.Click += async (_, _) => await LaunchAsync();
 
         _actionCard.Controls.AddRange(new Control[]
@@ -275,7 +321,7 @@ public sealed class MainForm : Form
 
     private void BuildInstancesCard()
     {
-        _instancesCard.SetBounds(0, 0, CardWidth(), 320);
+        _instancesCard.SetBounds(0, 0, CardWidth(), Theme.S(320));
         _instancesCard.Padding = new Padding(0);
 
         _instancesTitle.Text = "已经打开";
@@ -283,14 +329,14 @@ public sealed class MainForm : Form
         _instancesTitle.ForeColor = Theme.TextPrimary;
         _instancesTitle.BackColor = Color.White;
         _instancesTitle.AutoSize = true;
-        _instancesTitle.Location = new Point(16, 14);
+        _instancesTitle.Location = Theme.Pt(16, 14);
 
         _closeAllButton.Text = "全部关闭";
         _closeAllButton.Kind = ButtonKind.Danger;
         _closeAllButton.Font = Theme.SmallFont;
-        _closeAllButton.Size = new Size(80, 26);
+        _closeAllButton.Size = Theme.Sz(80, 26);
         _closeAllButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _closeAllButton.Location = new Point(_instancesCard.Width - 96, 10);
+        _closeAllButton.Location = new Point(_instancesCard.Width - Theme.S(96), Theme.S(10));
         _closeAllButton.Click += async (_, _) => await CloseAllAsync();
 
         _rows.Dock = DockStyle.Fill;
@@ -298,7 +344,7 @@ public sealed class MainForm : Form
         _rows.WrapContents = false;
         _rows.AutoScroll = true;
         _rows.BackColor = Color.White;
-        _rows.Padding = new Padding(12, 42, 12, 10);
+        _rows.Padding = Theme.Pad(12, 42, 12, 10);
 
         _emptyHint.Text = "还没有打开微信\r\n点上面的绿色按钮就行，不用改设置";
         _emptyHint.Font = Theme.BodyFont;
@@ -318,7 +364,7 @@ public sealed class MainForm : Form
 
     private void BuildLogCard()
     {
-        _logCard.SetBounds(0, 0, CardWidth(), LogCollapsedHeight);
+        _logCard.SetBounds(0, 0, CardWidth(), Theme.S(LogCollapsedHeight));
 
         var caption = new Label
         {
@@ -327,15 +373,15 @@ public sealed class MainForm : Form
             ForeColor = Theme.TextSecondary,
             BackColor = Color.White,
             AutoSize = true,
-            Location = new Point(16, 11),
+            Location = Theme.Pt(16, 11),
         };
 
         _logToggle.Text = "展开";
         _logToggle.Kind = ButtonKind.Ghost;
         _logToggle.Font = Theme.SmallFont;
-        _logToggle.Size = new Size(56, 24);
+        _logToggle.Size = Theme.Sz(56, 24);
         _logToggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _logToggle.Location = new Point(_logCard.Width - 72, 8);
+        _logToggle.Location = new Point(_logCard.Width - Theme.S(72), Theme.S(8));
         _logToggle.Click += (_, _) => ToggleLog();
 
         _log.Multiline = true;
@@ -349,13 +395,13 @@ public sealed class MainForm : Form
         _log.TabStop = false;
         _log.Visible = !_logCollapsed;
 
-        var logHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 38, 14, 12), BackColor = Color.White };
+        var logHost = new Panel { Dock = DockStyle.Fill, Padding = Theme.Pad(14, 38, 14, 12), BackColor = Color.White };
         logHost.Controls.Add(_log);
         logHost.Controls.Add(caption);
         _logCard.Controls.Add(logHost);
     }
 
-    private int CardWidth() => Math.Max(320, ClientSize.Width - 32);
+    private int CardWidth() => Math.Max(Theme.S(320), ClientSize.Width - Theme.S(32));
 
     private static Label Caption(string text) => new()
     {
@@ -755,7 +801,7 @@ public sealed class MainForm : Form
     private void ToggleLog()
     {
         _logCollapsed = !_logCollapsed;
-        _logCard.Height = _logCollapsed ? LogCollapsedHeight : LogExpandedHeight;
+        _logCard.Height = Theme.S(_logCollapsed ? LogCollapsedHeight : LogExpandedHeight);
         _log.Visible = !_logCollapsed;
         _logToggle.Text = _logCollapsed ? "展开" : "收起";
         _logToggle.Invalidate();
@@ -789,7 +835,7 @@ public sealed class MainForm : Form
 
         _rows.Controls.Clear();
 
-        var width = Math.Max(260, _rows.ClientSize.Width - _rows.Padding.Horizontal - 20);
+        var width = Math.Max(Theme.S(260), _rows.ClientSize.Width - _rows.Padding.Horizontal - Theme.S(20));
         var index = 1;
 
         foreach (var instance in instances)
@@ -828,8 +874,11 @@ public sealed class MainForm : Form
 
         if (WindowState == FormWindowState.Normal)
         {
-            _config.WindowWidth = Width;
-            _config.WindowHeight = Height;
+            // 存「逻辑像素」（96 DPI 口径）：200% 屏上窗口物理宽 1320，存下来仍是 660，
+            // 换回 96 DPI 的屏幕不会开出一个占满全屏的窗口。
+            var scale = Theme.Scale;
+            _config.WindowWidth = (int)Math.Round(ClientSize.Width / scale);
+            _config.WindowHeight = (int)Math.Round(ClientSize.Height / scale);
         }
 
         if (!_config.Save(out var error))

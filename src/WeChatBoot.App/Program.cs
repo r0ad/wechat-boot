@@ -17,6 +17,10 @@ internal static class Program
         {
             ApplicationConfiguration.Initialize();
 
+            // 必须在进程 DPI 感知（ApplicationConfiguration.Initialize 里按 csproj 设的
+            // SystemAware）之后读，否则读到的永远是 96。整站缩放口径由此确定，见 Theme。
+            Theme.ApplyDpi(DpiProbe.System());
+
             // --settings 只用于开发和截图：直接把设置窗口当主窗口打开
             if (args.Any(a => string.Equals(a, "--settings", StringComparison.OrdinalIgnoreCase)))
             {

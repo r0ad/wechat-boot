@@ -24,3 +24,7 @@ UpgradeLog*.htm
 *.user
 wechatboot.log
 /out/
+
+# 视觉回归产物 / 本地临时文件
+artifacts/
+.tmp/
